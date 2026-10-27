@@ -1,3 +1,5 @@
+> **AI Study Assistant** — студенттерге арналған сайт [`AIStudyAssistant/`](AIStudyAssistant/README.md) қалтасында. Іске қосу: `cd AIStudyAssistant && npm install && npm run dev`.
+
 <a href="https://chatbot.ai-sdk.dev/demo">
   <img alt="Chatbot" src="app/(chat)/opengraph-image.png">
   <h1 align="center">Chatbot</h1>
