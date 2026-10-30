@@ -79,6 +79,7 @@ export function ProfilePage() {
           </button>
         </div>
       </form>
+      {STATIC_SITE && <ApiKeyCard kind="gemini" />}
       {STATIC_SITE && <LocalModelCard />}
       {STATIC_SITE && <ApiKeyCard />}
     </div>
