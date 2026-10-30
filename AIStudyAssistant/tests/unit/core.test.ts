@@ -13,7 +13,8 @@ import {
 import { AssistantService, classifyQuestion } from "../../server/services/assistantService.js";
 import { parseSections, stripCodeFence } from "../../server/services/prompts.js";
 import { fuzzyQuery, needsWebSearch, SearchService, searchLanguages, searchTerms } from "../../server/services/searchService.js";
-import { operationsOf, parseInstruction, DEFAULT_SETTINGS } from "../../src/services/imageOps.js";
+import { operationsOf, parseInstruction, parseRecolor, DEFAULT_SETTINGS } from "../../src/services/imageOps.js";
+import { recolorPixels, resizeMask } from "../../src/services/aiImageEdit.js";
 
 const code = (fn: () => unknown) => {
   try {
@@ -226,6 +227,34 @@ describe("image instructions", () => {
       background: "#ffffff",
     });
     expect(parseInstruction("hello")).toEqual({});
+  });
+
+  it("understands which part to recolour and into which colour", () => {
+    expect(parseRecolor("шашын қара түске боя")).toEqual({ target: "hair", color: "#1c1c1c", word: "шашын" });
+    expect(parseRecolor("покрась волосы в чёрный")).toMatchObject({ target: "hair", color: "#1c1c1c" });
+    expect(parseRecolor("make the sky pink")).toMatchObject({ target: "sky", color: "#ef7fb0" });
+    // A colour before the part describes it; the one after is the new colour.
+    expect(parseRecolor("қызыл көйлекті көк түске боя")).toMatchObject({ target: "red dress", color: "#2f63d6" });
+    expect(parseRecolor("бас киімін қызыл қыл")).toMatchObject({ target: "hat", word: "бас киімін" });
+    expect(parseRecolor("фонды ақ қыл")).toBeNull();
+    expect(parseRecolor("ақ-қара қыл")).toBeNull();
+    expect(parseRecolor("суретті қара түске боя")).toBeNull();
+  });
+
+  it("recolours only the masked part and keeps its shading", () => {
+    // 100 pixels: 80 green "hair" pixels in two shades, 10 skin pixels at the blurry mask edge,
+    // and 10 green pixels outside the mask.
+    const px = (i: number) => (i < 80 ? (i % 2 ? [70, 170, 100] : [90, 200, 120]) : i < 90 ? [230, 190, 160] : [90, 200, 120]);
+    const data = new Uint8ClampedArray(Array.from({ length: 100 }, (_, i) => [...px(i), 255]).flat());
+    const mask = new Float32Array(100).map((_, i) => (i < 80 ? 0.9 : i < 90 ? 0.5 : 0.05));
+    expect(recolorPixels(data, mask, "#1c1c1c")).toBe(true);
+    const lum = (i: number) => data[i * 4] + data[i * 4 + 1] + data[i * 4 + 2];
+    expect(lum(0)).toBeLessThan(150); // dyed dark
+    expect(lum(1)).toBeLessThan(lum(0)); // the darker strand stays darker
+    expect(lum(85)).toBeGreaterThan(500); // skin differs in colour: barely touched
+    expect([...data.slice(95 * 4, 96 * 4)]).toEqual([90, 200, 120, 255]); // outside the mask: untouched
+    expect(recolorPixels(new Uint8ClampedArray(400), new Float32Array(100), "#1c1c1c")).toBe(false);
+    expect([...resizeMask(new Float32Array([0, 1]), 2, 1, 4, 1)]).toEqual([0, 0.25, 0.75, 1]);
   });
 
   it("lists only the operations that change the image", () => {

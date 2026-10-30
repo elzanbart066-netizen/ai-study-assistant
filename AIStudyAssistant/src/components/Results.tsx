@@ -268,6 +268,7 @@ const OPERATION_LABEL: Record<string, MessageKey> = {
   blur: "tool.images.blur",
   background: "tool.images.background",
   text: "tool.images.text",
+  recolor: "tool.images.recolor",
 };
 
 export function operationLabel(op: string, t: (key: MessageKey) => string): string {
