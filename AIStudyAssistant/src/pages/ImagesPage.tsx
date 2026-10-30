@@ -7,12 +7,14 @@ import { ImageView, operationLabel } from "../components/Results.js";
 import { UploadPanel } from "../components/UploadPanel.js";
 import type { MessageKey } from "../i18n/dictionary.js";
 import { useI18n } from "../i18n/I18nProvider.js";
+import { NothingFoundError, recolorImage } from "../services/aiImageEdit.js";
 import {
   DEFAULT_SETTINGS,
   type EditSettings,
   loadImage,
   operationsOf,
   parseInstruction,
+  parseRecolor,
   readAsDataUrl,
   renderEdited,
 } from "../services/imageOps.js";
@@ -38,6 +40,9 @@ export function ImagesPage() {
   const notify = useNotify();
   const [original, setOriginal] = useState<{ url: string; mime: string } | null>(null);
   const [img, setImg] = useState<HTMLImageElement | null>(null);
+  // The picture the sliders work on: the original, or the AI-recoloured version of it.
+  const [base, setBase] = useState<HTMLImageElement | null>(null);
+  const [aiStatus, setAiStatus] = useState<string | null>(null);
   const [settings, setSettings] = useState<EditSettings>(DEFAULT_SETTINGS);
   const [instruction, setInstruction] = useState("");
   const [preview, setPreview] = useState<string>("");
@@ -47,27 +52,45 @@ export function ImagesPage() {
   const renderTimer = useRef<number>(undefined);
 
   useEffect(() => {
-    if (!img || !original) return;
+    if (!base || !original) return;
     window.clearTimeout(renderTimer.current);
-    renderTimer.current = window.setTimeout(() => setPreview(renderEdited(img, settings, original.mime)), 60);
+    renderTimer.current = window.setTimeout(() => setPreview(renderEdited(base, settings, original.mime)), 60);
     return () => window.clearTimeout(renderTimer.current);
-  }, [img, settings, original]);
+  }, [base, settings, original]);
 
   const onFile = async (file: File) => {
     setInvalid(false);
     req.setData(null);
     const url = await readAsDataUrl(file);
     setOriginal({ url, mime: file.type });
-    setImg(await loadImage(url));
+    const loaded = await loadImage(url);
+    setImg(loaded);
+    setBase(loaded);
     setSettings(DEFAULT_SETTINGS);
   };
 
-  const applyInstruction = () => {
+  const applyInstruction = async () => {
     const parsed = parseInstruction(instruction);
-    const keys = Object.keys(parsed);
-    if (keys.length === 0) {
+    const recolor = parseRecolor(instruction);
+    if (Object.keys(parsed).length === 0 && !recolor) {
       notify(t("tool.images.notUnderstood"), "info");
       return;
+    }
+    if (recolor && base && original) {
+      // Recolouring needs the AI to find the part first; it edits the working picture itself.
+      setAiStatus(t("tool.images.aiWorking", { part: recolor.word }));
+      try {
+        const url = await recolorImage(base, recolor, original.mime, (p) =>
+          setAiStatus(p < 1 ? t("tool.images.aiLoading", { pct: String(Math.round(p * 100)) }) : t("tool.images.aiWorking", { part: recolor.word })),
+        );
+        setBase(await loadImage(url));
+        parsed.recolor = [settings.recolor, recolor.word].filter(Boolean).join(", ");
+      } catch (error) {
+        notify(t(error instanceof NothingFoundError ? "tool.images.aiNotFound" : "tool.images.aiFailed", { part: recolor.word }), "error");
+        if (Object.keys(parsed).length === 0) return;
+      } finally {
+        setAiStatus(null);
+      }
     }
     setSettings((s) => ({ ...s, ...parsed }));
     const labels = operationsOf({ ...DEFAULT_SETTINGS, ...parsed }).map((op) => operationLabel(op, t));
@@ -118,10 +141,15 @@ export function ImagesPage() {
               rows={3}
               value={instruction}
             />
-            <button className="btn btn-ghost" onClick={applyInstruction} type="button">
-              <Icon name="spark" size={18} />
+            <button className="btn btn-ghost" disabled={aiStatus !== null} onClick={() => void applyInstruction()} type="button">
+              {aiStatus !== null ? <span className="spinner" aria-hidden="true" /> : <Icon name="spark" size={18} />}
               {t("tool.images.apply")}
             </button>
+            {aiStatus !== null && (
+              <p aria-live="polite" className="muted">
+                {aiStatus}
+              </p>
+            )}
             <hr />
             {SLIDERS.map((s) => (
               <label className="range-field" key={s.key}>
@@ -170,7 +198,14 @@ export function ImagesPage() {
               />
             </label>
             <div className="form-actions">
-              <button className="btn btn-ghost" onClick={() => setSettings(DEFAULT_SETTINGS)} type="button">
+              <button
+                className="btn btn-ghost"
+                onClick={() => {
+                  setSettings(DEFAULT_SETTINGS);
+                  setBase(img);
+                }}
+                type="button"
+              >
                 {t("tool.images.reset")}
               </button>
               <button
@@ -179,6 +214,7 @@ export function ImagesPage() {
                 onClick={() => {
                   setOriginal(null);
                   setImg(null);
+                  setBase(null);
                   setPreview("");
                 }}
                 title={t("upload.choose")}

@@ -38,6 +38,7 @@ const ALLOWED_OPERATIONS = new Set([
   "background",
   "text",
   "resize",
+  "recolor",
 ]);
 
 export interface CreateFileInput {
