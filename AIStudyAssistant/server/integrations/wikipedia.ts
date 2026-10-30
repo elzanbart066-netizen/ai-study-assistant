@@ -8,6 +8,8 @@ export interface SearchHit extends SourceLink {
 /** Contract for the web search integration. */
 export interface SearchProvider {
   search(query: string, language: Language, limit?: number): Promise<SearchHit[]>;
+  /** The provider's own spelling correction ("did you mean"), if it has one. */
+  suggest?(query: string, language: Language): Promise<string | null>;
 }
 
 type FetchFn = typeof fetch;
@@ -20,11 +22,27 @@ type FetchFn = typeof fetch;
 export class WikipediaSearch implements SearchProvider {
   constructor(private fetchFn: FetchFn = fetch) {}
 
-  async search(query: string, language: Language, limit = 3): Promise<SearchHit[]> {
+  private async request<T>(language: Language, params: Record<string, string>): Promise<T> {
     const base = `https://${language}.wikipedia.org/w/api.php`;
-    const params = new URLSearchParams({
-      action: "query",
-      format: "json",
+    const query = new URLSearchParams({ action: "query", format: "json", origin: "*", ...params });
+    try {
+      const response = await this.fetchFn(`${base}?${query}`, {
+        headers: { "User-Agent": "AIStudyAssistant/1.0 (educational project)" },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      return (await response.json()) as T;
+    } catch {
+      throw new AppError("SEARCH_UNAVAILABLE", "search failed");
+    }
+  }
+
+  async search(query: string, language: Language, limit = 3): Promise<SearchHit[]> {
+    const data = await this.request<{
+      query?: { pages?: Record<string, { title: string; fullurl: string; extract?: string; index?: number }> };
+    }>(language, {
       generator: "search",
       gsrsearch: query,
       gsrlimit: String(limit),
@@ -33,23 +51,7 @@ export class WikipediaSearch implements SearchProvider {
       explaintext: "1",
       exlimit: String(limit),
       inprop: "url",
-      origin: "*",
     });
-    let data: {
-      query?: { pages?: Record<string, { title: string; fullurl: string; extract?: string; index?: number }> };
-    };
-    try {
-      const response = await this.fetchFn(`${base}?${params}`, {
-        headers: { "User-Agent": "AIStudyAssistant/1.0 (educational project)" },
-        signal: AbortSignal.timeout(10_000),
-      });
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-      data = (await response.json()) as typeof data;
-    } catch {
-      throw new AppError("SEARCH_UNAVAILABLE", "search failed");
-    }
     const pages = Object.values(data.query?.pages ?? {});
     pages.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
     return pages
@@ -60,6 +62,17 @@ export class WikipediaSearch implements SearchProvider {
         domain: `${language}.wikipedia.org`,
         extract: p.extract?.trim() ?? "",
       }));
+  }
+
+  async suggest(query: string, language: Language): Promise<string | null> {
+    const data = await this.request<{ query?: { searchinfo?: { suggestion?: string } } }>(language, {
+      list: "search",
+      srsearch: query,
+      srinfo: "suggestion",
+      srprop: "",
+      srlimit: "1",
+    });
+    return data.query?.searchinfo?.suggestion ?? null;
   }
 }
 
