@@ -29,6 +29,8 @@ export interface LocalModelControl {
   /** False when the browser has no WebGPU, so the model cannot run here. */
   supported(): boolean;
   enabled(): boolean;
+  /** True once the model is loaded and answering. */
+  ready(): boolean;
   /** Turns the model on (and downloads it the first time) or off. */
   setEnabled(on: boolean): void;
   /** Loads the model, reporting progress from 0 to 1; resolves when it is ready. */
