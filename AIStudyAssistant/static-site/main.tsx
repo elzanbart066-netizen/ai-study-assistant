@@ -8,8 +8,11 @@ import { I18nProvider } from "../src/i18n/I18nProvider.js";
 import { AuthProvider } from "../src/services/AuthProvider.js";
 import "../src/styles/main.css";
 import { setLogSink } from "../server/lib/logger.js";
+import { registerLocalModel } from "../src/services/aiKey.js";
+import { localModel } from "./localModel.js";
 
 setLogSink((line) => console.warn(line));
+registerLocalModel(localModel);
 
 const root = document.getElementById("root");
 if (root) {
