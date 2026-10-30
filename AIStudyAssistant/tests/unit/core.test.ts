@@ -241,19 +241,34 @@ describe("image instructions", () => {
     expect(parseRecolor("суретті қара түске боя")).toBeNull();
   });
 
-  it("recolours only the masked part and keeps its shading", () => {
-    // 100 pixels: 80 green "hair" pixels in two shades, 10 skin pixels at the blurry mask edge,
-    // and 10 green pixels outside the mask.
-    const px = (i: number) => (i < 80 ? (i % 2 ? [70, 170, 100] : [90, 200, 120]) : i < 90 ? [230, 190, 160] : [90, 200, 120]);
-    const data = new Uint8ClampedArray(Array.from({ length: 100 }, (_, i) => [...px(i), 255]).flat());
-    const mask = new Float32Array(100).map((_, i) => (i < 80 ? 0.9 : i < 90 ? 0.5 : 0.05));
-    expect(recolorPixels(data, mask, "#1c1c1c")).toBe(true);
-    const lum = (i: number) => data[i * 4] + data[i * 4 + 1] + data[i * 4 + 2];
-    expect(lum(0)).toBeLessThan(150); // dyed dark
-    expect(lum(1)).toBeLessThan(lum(0)); // the darker strand stays darker
-    expect(lum(85)).toBeGreaterThan(500); // skin differs in colour: barely touched
-    expect([...data.slice(95 * 4, 96 * 4)]).toEqual([90, 200, 120, 255]); // outside the mask: untouched
-    expect(recolorPixels(new Uint8ClampedArray(400), new Float32Array(100), "#1c1c1c")).toBe(false);
+  it("recolours the whole part, even where the model was unsure, and nothing else", () => {
+    // 40x40 picture: green hair in two shades, skin under it, white background,
+    // and a green object far away in the corner.
+    const W = 40;
+    const color = (x: number, y: number) => {
+      if (y >= 4 && y <= 15 && x >= 8 && x <= 31) return y % 2 ? [70, 170, 100] : [90, 200, 120];
+      if (y >= 16 && y <= 28 && x >= 10 && x <= 29) return [230, 190, 160];
+      if (y >= 36 && x <= 5) return [90, 200, 120];
+      return [240, 240, 240];
+    };
+    const data = new Uint8ClampedArray(W * W * 4);
+    for (let i = 0; i < W * W; i++) data.set([...color(i % W, Math.floor(i / W)), 255], i * 4);
+    // The model's 10x10 mask: sure about the edge of the hair, unsure in its middle.
+    const mask = new Float32Array(100).map((_, i) => {
+      const [cx, cy] = [i % 10, Math.floor(i / 10)];
+      if (cy === 2 && (cx === 4 || cx === 5)) return 0.05;
+      return cy >= 1 && cy <= 3 && cx >= 2 && cx <= 7 ? 0.6 : 0.02;
+    });
+    expect(recolorPixels(data, W, W, { mask, width: 10, height: 10 }, "#1c1c1c")).toBe(true);
+    const at = (x: number, y: number) => [...data.slice((y * W + x) * 4, (y * W + x) * 4 + 3)];
+    const lum = (x: number, y: number) => at(x, y).reduce((a, b) => a + b, 0);
+    expect(lum(20, 10)).toBeLessThan(150); // the unsure middle of the hair is dyed too
+    expect(lum(9, 5)).toBeLessThan(150); // and its edge
+    expect(lum(20, 9)).toBeLessThan(lum(20, 10)); // the darker strand stays darker
+    expect(at(20, 20)).toEqual([230, 190, 160]); // skin: untouched
+    expect(at(4, 6)).toEqual([240, 240, 240]); // background next to the hair: untouched
+    expect(at(2, 38)).toEqual([90, 200, 120]); // the same green far away: untouched
+    expect(recolorPixels(new Uint8ClampedArray(400), 10, 10, { mask: new Float32Array(100), width: 10, height: 10 }, "#1c1c1c")).toBe(false);
     expect([...resizeMask(new Float32Array([0, 1]), 2, 1, 4, 1)]).toEqual([0, 0.25, 0.75, 1]);
   });
 
