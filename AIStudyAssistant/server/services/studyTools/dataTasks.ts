@@ -17,6 +17,8 @@ type Step =
 export interface DataTask {
   data: Item[];
   steps: Step[];
+  /** Set when the task asks to type the data in: the program reads it, `data` is a sample. */
+  input?: { count: number | null };
 }
 
 // Kazakh typed on a Russian keyboard is common, so text is compared with Kazakh letters folded.
@@ -30,13 +32,13 @@ const STEP_PHRASES_RAW: [RegExp, Step][] = [
   [/(соңғы|ақырғы|last|последн\p{L}*) (әріп|letter|букв)\p{L}*/gu, { kind: "last" }],
   [/(ұзындығ|length|длин)\p{L}*|әріп сан\p{L}*/gu, { kind: "length" }],
   [/(кему|кемімелі|descending|по убыв\p{L}*|убыва\p{L}*)( ретімен| order| порядк\p{L}*)?( (сұрыпта|сортта|сортир|sort|ретте)\p{L}*)?/gu, { kind: "sort", desc: true }],
-  [/(сұрыпта|сортта|сортир|отсортир|sort|ретте|упорядоч)\p{L}*|(әліппе|алфавит|alphabet|өсу|ascending|возраст)\p{L}* (ретімен|order|порядк\p{L}*)|по алфавиту|alphabetical\p{L}*/gu, { kind: "sort", desc: false }],
+  [/(сұрыпта|сортта|сортир|отсортир|sort|ретте|упорядоч)\p{L}*|(әліппе|алфавит|alphabet|өсу|ascending|возраст)\p{L}* (ретімен|order|порядк\p{L}*)|(әліппе|алфавит)\p{L}* (бойынша|бойынш\p{L}*)|по алфавиту|alphabetical\p{L}*/gu, { kind: "sort", desc: false }],
   [/кері (ретпен|қарай)|reverse\p{L}*|перевер\p{L}*|разверн\p{L}*/gu, { kind: "reverse" }],
   [/(қайталанбайтын|unique|уникальн\p{L}*|без повтор\p{L}*|повтор\p{L}*|дубликат\p{L}*|duplicates?)/gu, { kind: "unique" }],
-  [/(жұп|even|ч[её]тн\p{L}*)( сан\p{L}*| числ\p{L}*| numbers?)?/gu, { kind: "filter", keep: "even" }],
-  [/(тақ|odd|неч[её]тн\p{L}*)( сан\p{L}*| числ\p{L}*| numbers?)?/gu, { kind: "filter", keep: "odd" }],
-  [/(оң|positive|положительн\p{L}*)( сан\p{L}*| числ\p{L}*| numbers?)?/gu, { kind: "filter", keep: "positive" }],
-  [/(теріс|negative|отрицательн\p{L}*)( сан\p{L}*| числ\p{L}*| numbers?)?/gu, { kind: "filter", keep: "negative" }],
+  [/(?<!\p{L})(жұп|even|ч[её]тн\p{L}*)( сан\p{L}*| числ\p{L}*| numbers?)?/gu, { kind: "filter", keep: "even" }],
+  [/(?<!\p{L})(тақ|odd|неч[её]тн\p{L}*)( сан\p{L}*| числ\p{L}*| numbers?)?/gu, { kind: "filter", keep: "odd" }],
+  [/(?<!\p{L})(оң|positive|положительн\p{L}*)( сан\p{L}*| числ\p{L}*| numbers?)?/gu, { kind: "filter", keep: "positive" }],
+  [/(?<!\p{L})(теріс|negative|отрицательн\p{L}*)( сан\p{L}*| числ\p{L}*| numbers?)?/gu, { kind: "filter", keep: "negative" }],
   [/(қосынды|sum|сумм)\p{L}*/gu, { kind: "aggregate", op: "sum" }],
   [/(орташа|average|mean|средн)\p{L}*( мән\p{L}*| знач\p{L}*)?/gu, { kind: "aggregate", op: "average" }],
   [/(ең үлкен|max\p{L}*|largest|biggest|наибольш\p{L}*|максим\p{L}*)\p{L}*/gu, { kind: "aggregate", op: "max" }],
@@ -55,7 +57,9 @@ const FILLER = new Set(
 дано даны данные имена слова числа числ список массив используя используй возьми положи сложи сделай напиши выведи
 программ код их эти из в и на по с каждого каждое все новый результат найди найти посчитай вычисли оставь удали отсортируй
 given names words numbers list array use using take put into the a an and of in each every them these write print program code new result
-find compute calculate keep remove show get then from only word`).split(/\s+/),
+find compute calculate keep remove show get then from only word
+адам оқушы студент атын есімін бойынша енгіз ендір пернетақта клавиатура арқылы баға балл ұпай
+введи введите ввод вводит человек людей студент ученик клавиатур с оцен балл enter input read type people person student user keyboard grades scores marks`).split(/\s+/),
 );
 
 const NAME_HINT = /(^|\s)(ат|есім|name|им[яеё]н|имена)/u;
@@ -64,7 +68,8 @@ const MARKER = /^(берилген|берилгени|деген|атты|атт
 /** Finds the data and the steps of a list task, or null when the task is not one. */
 export function parseDataTask(prompt: string): DataTask | null {
   const text = fold(prompt);
-  const data = extractData(prompt);
+  const typed = INPUT_WORD.test(text) ? typedData(prompt, text) : null;
+  const data = typed ?? extractData(prompt);
   if (!data || data.items.length < 2) return null;
 
   const found: { at: number; end: number; step: Step }[] = [];
@@ -77,6 +82,11 @@ export function parseDataTask(prompt: string): DataTask | null {
   }
   if (found.length === 0) return null;
   found.sort((a, b) => a.at - b.at);
+  // "sort descending" / "сорттап кему ретімен": one sort, in the stated direction.
+  for (let i = found.length - 1; i > 0; i--) {
+    const [a, b] = [found[i - 1], found[i]];
+    if (a.step.kind === "sort" && b.step.kind === "sort" && b.at - a.end <= 3) found.splice(b.step.desc ? i - 1 : i, 1);
+  }
   const steps: Step[] = [];
   for (const { step } of found) {
     if (steps.some((s) => JSON.stringify(s) === JSON.stringify(step))) continue;
@@ -103,7 +113,30 @@ export function parseDataTask(prompt: string): DataTask | null {
   const items = !numeric && NAME_HINT.test(text)
     ? data.items.map((w) => capitalize(String(w)))
     : data.items;
-  return { data: items, steps };
+  return { data: items, steps, ...(typed ? { input: typed.input } : {}) };
+}
+
+// "5 адам атын енгізіп ...": the program reads the data, so a sample stands in for it here.
+const INPUT_WORD = /енгиз|ендир|пернетакта|введ|ввод|клавиатур|(?<!\p{L})(input|enter|type in|read)(?!\p{L})/u;
+const SAMPLE_NAMES = ["Саят", "Али", "Нуржан", "Елжан", "Думан", "Айгерим", "Бекзат", "Дана", "Ерлан", "Мадина", "Асель", "Тимур"];
+const SAMPLE_NAMES_LATIN = ["Sam", "Ann", "Tom", "Eve", "Bob", "Kate", "Max", "Lily", "Dan", "Mia", "Leo", "Zoe"];
+const SAMPLE_WORDS_LATIN = ["school", "book", "pen", "desk", "map", "ruler", "bag", "board", "chalk", "globe", "paper", "table"];
+const SAMPLE_WORDS = ["мектеп", "кітап", "дәптер", "қалам", "сызғыш", "сөмке", "парта", "тақта", "бор", "глобус", "сурет", "кесте"];
+
+function typedData(prompt: string, text: string): { items: Item[]; tokens: Set<string>; input: { count: number | null } } | null {
+  const numbers = prompt.match(/-?\d+(?:[.,]\d+)?/g) ?? [];
+  if (numbers.length > 1) return null;
+  const count = numbers.length ? Number(numbers[0]) : null;
+  const numeric = /(?<!\p{L})(сан|бага|балл|упай|number|grade|score|mark|числ|чисел|оцен)\p{L}*/u.test(text) && !/(?<!\p{L})(ат|есим|соз|name|word|им[яеё]н|имена|слов)\p{L}*/u.test(text);
+  const latin = !/\p{Script=Cyrillic}/u.test(prompt);
+  const words = /(?<!\p{L})(ат|есим|name|им[яеё]н|имена)\p{L}*/u.test(text)
+    ? latin ? SAMPLE_NAMES_LATIN : SAMPLE_NAMES
+    : /(?<!\p{L})(соз|word|слов)\p{L}*/u.test(text) ? latin ? SAMPLE_WORDS_LATIN : SAMPLE_WORDS : null;
+  if (!numeric && !words) return null;
+  if (count !== null && (!Number.isInteger(count) || count < 2 || count > 12)) return null;
+  const n = count ?? 5;
+  const items: Item[] = numeric ? [7, 3, 12, 5, 9, 4, 10, 1, 8, 6, 2, 11].slice(0, n) : words!.slice(0, n);
+  return { items, tokens: new Set(), input: { count } };
 }
 
 function capitalize(word: string) {
@@ -204,7 +237,7 @@ export function codeFromData(prompt: string, language: CodeLanguage, lang: Langu
     language,
     code: GENERATORS[language](task, numeric, decimals),
     explanation: explain(task, lang),
-    sampleInput: "-",
+    sampleInput: task.input ? [...(task.input.count === null ? [String(task.data.length)] : []), ...task.data.map(String)].join("\n") : "-",
     sampleOutput: formatOutput(runDataTask(task)),
     provider: "offline",
   };
@@ -271,7 +304,9 @@ function stepText(s: Step, lang: Language): string {
 }
 
 function explain(task: DataTask, lang: Language): string {
-  const intro = { kk: "Берілген деректер бағдарламаға тікелей жазылды", ru: "Данные из задания записаны прямо в программу", en: "The data from the task is written straight into the program" }[lang];
+  const intro = task.input
+    ? { kk: "Бағдарлама деректерді пернетақтадан оқиды (әр жолға біреуден), мысалы", ru: "Программа читает данные с клавиатуры (по одному в строке), например", en: "The program reads the data from the keyboard (one per line), for example" }[lang]
+    : { kk: "Берілген деректер бағдарламаға тікелей жазылды", ru: "Данные из задания записаны прямо в программу", en: "The data from the task is written straight into the program" }[lang];
   const order = { kk: "Содан кейін", ru: "Затем", en: "Then" }[lang];
   const note = {
     kk: "Сұрыптау таңбалардың Unicode реті бойынша жүреді (қазақтың өзіне тән әріптері ә, ғ, қ т.б. әліппеден өзгеше орында тұруы мүмкін).",
@@ -291,8 +326,57 @@ const quote = (s: string) => JSON.stringify(s);
 const literal = (task: DataTask, numeric: boolean, decimals: boolean) =>
   task.data.map((v) => (numeric ? (decimals ? String(v).includes(".") ? String(v) : `${v}.0` : String(v)) : quote(String(v)))).join(", ");
 
+/** The lines that create `items`: the task's data, or reading it when the task asks to type it in. */
+function source(language: CodeLanguage, task: DataTask, numeric: boolean, decimals: boolean): string[] {
+  const values = literal(task, numeric, decimals);
+  const type = numeric ? (decimals ? "real" : "int") : "text";
+  if (!task.input) {
+    return {
+      python: [`items = [${values}]`],
+      javascript: [`let items = [${values}];`],
+      java: [`List<${{ text: "String", int: "Integer", real: "Double" }[type]}> items = new ArrayList<>(List.of(${values}));`],
+      cpp: [`std::vector<${{ text: "std::string", int: "long long", real: "double" }[type]}> items = {${values}};`],
+      csharp: [`var items = new List<${{ text: "string", int: "long", real: "double" }[type]}> { ${values} };`],
+    }[language];
+  }
+  const count = task.input.count;
+  switch (language) {
+    case "python":
+      return [
+        ...(count === null ? ["n = int(input())"] : []),
+        `items = [${numeric ? "int(input())" : "input().strip()"} for _ in range(${count ?? "n"})]`,
+      ];
+    case "javascript":
+      return [
+        'const lines = require("fs").readFileSync(0, "utf8").split(/\\r?\\n/).map((s) => s.trim()).filter(Boolean);',
+        count === null
+          ? `let items = lines.slice(1, Number(lines[0]) + 1)${numeric ? ".map(Number)" : ""};`
+          : `let items = lines.slice(0, ${count})${numeric ? ".map(Number)" : ""};`,
+      ];
+    case "java":
+      return [
+        'Scanner in = new Scanner(System.in, "UTF-8");',
+        count === null ? "int n = Integer.parseInt(in.nextLine().trim());" : `int n = ${count};`,
+        `List<${numeric ? "Integer" : "String"}> items = new ArrayList<>();`,
+        `for (int i = 0; i < n; i++) items.add(${numeric ? "Integer.parseInt(in.nextLine().trim())" : "in.nextLine().trim()"});`,
+      ];
+    case "cpp":
+      return [
+        count === null ? "int n;\nstd::cin >> n;" : `int n = ${count};`,
+        `std::vector<${numeric ? "long long" : "std::string"}> items(n);`,
+        numeric ? "for (auto& x : items) std::cin >> x;" : "for (auto& x : items) std::getline(std::cin >> std::ws, x);",
+      ];
+    case "csharp":
+      return [
+        count === null ? "int n = int.Parse(Console.ReadLine().Trim());" : `int n = ${count};`,
+        `var items = new List<${numeric ? "long" : "string"}>();`,
+        `for (int i = 0; i < n; i++) items.Add(${numeric ? "long.Parse(Console.ReadLine().Trim())" : "Console.ReadLine().Trim()"});`,
+      ];
+  }
+}
+
 const python: Generator = (task, numeric, decimals) => {
-  const lines = [`items = [${literal(task, numeric, decimals)}]`];
+  const lines = source("python", task, numeric, decimals);
   let isList = true;
   for (const s of task.steps) {
     if (s.kind === "first") lines.push("items = [word[0] for word in items]");
@@ -321,7 +405,7 @@ const python: Generator = (task, numeric, decimals) => {
 };
 
 const javascript: Generator = (task, numeric, decimals) => {
-  const lines = [`let items = [${literal(task, numeric, decimals)}];`];
+  const lines = source("javascript", task, numeric, decimals);
   let isList = true;
   for (const s of task.steps) {
     if (s.kind === "first") lines.push("items = items.map((word) => [...word][0]);");
@@ -373,7 +457,7 @@ function typesAfter(task: DataTask, numeric: boolean, decimals: boolean): { star
 const java: Generator = (task, numeric, decimals) => {
   const { start, out } = typesAfter(task, numeric, decimals);
   const boxed = { text: "String", int: "Integer", real: "Double" };
-  const body: string[] = [`List<${boxed[start]}> items = new ArrayList<>(List.of(${literal(task, numeric, decimals)}));`];
+  const body: string[] = source("java", task, numeric, decimals);
   let isList = true;
   let n = 0;
   task.steps.forEach((s, i) => {
@@ -440,7 +524,7 @@ std::vector<std::string> letters(const std::string& word) {
 }
 `
     : "";
-  const body: string[] = [`std::vector<${ctype[start]}> items = {${literal(task, numeric, decimals)}};`];
+  const body: string[] = source("cpp", task, numeric, decimals);
   let isList = true;
   let n = 0;
   const prev = () => (n === 0 ? "items" : `items${n}`);
@@ -512,7 +596,7 @@ ${body.flatMap((l) => l.split("\n")).map((l) => `    ${l}`).join("\n")}
 const csharp: Generator = (task, numeric, decimals) => {
   const { start, out } = typesAfter(task, numeric, decimals);
   const ctype = { text: "string", int: "long", real: "double" };
-  const body: string[] = [`var items = new List<${ctype[start]}> { ${literal(task, numeric, decimals)} };`];
+  const body: string[] = source("csharp", task, numeric, decimals);
   let isList = true;
   task.steps.forEach((s, i) => {
     if (s.kind === "first") body.push("var items" + (i + 1) + " = items" + (i ? i : "") + '.Select(w => w.Substring(0, 1)).ToList();');

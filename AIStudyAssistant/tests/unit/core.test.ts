@@ -234,6 +234,24 @@ describe("assistant helpers", () => {
     expect(parseDataTask("n санының факториалы")).toBeNull();
   });
 
+  it("writes code that reads typed-in data when the task asks to enter it", () => {
+    const prompt = "массив код жазып бер 5 адам атын енгізіп сорттап әліппе бойынша";
+    const task = parseDataTask(prompt);
+    expect(task?.input).toEqual({ count: 5 });
+    expect(task?.steps).toEqual([{ kind: "sort", desc: false }]);
+    const result = codeFromData(prompt, "python", "kk");
+    expect(result?.code).toContain("input().strip() for _ in range(5)");
+    expect(result?.sampleInput.split("\n")).toHaveLength(5);
+    expect(result?.sampleOutput).toBe("Али, Думан, Елжан, Нуржан, Саят");
+    expect(runDataTask(parseDataTask("6 сан енгізіп, жұп сандарын алып қосындысын тап")!)).toBe(16);
+    expect(parseDataTask("read 3 names from input, take the first letters and sort descending")?.steps).toEqual([
+      { kind: "first" },
+      { kind: "sort", desc: true },
+    ]);
+    // "тақ" (odd) inside "пернетақтадан" is not a step.
+    expect(parseDataTask("пернетақтадан сөздер енгізіп, кері ретпен шығар")?.steps).toEqual([{ kind: "reverse" }]);
+  });
+
   it("gives the AI the task data and retries once when its code reads input", async () => {
     const prompts: string[] = [];
     const replies = ["## CODE\n```python\nnames = input().split()\n```\n## OUTPUT\n-", "## CODE\n```python\nprint([n for n in ['Али', 'Елжан'] ])\n```\n## OUTPUT\n-"];

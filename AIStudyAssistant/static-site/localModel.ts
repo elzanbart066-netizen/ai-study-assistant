@@ -110,6 +110,7 @@ export const localModel: LocalModelControl = {
   label: "Qwen3 1.7B (Apache-2.0)",
   supported,
   enabled,
+  ready: () => loaded !== null,
   setEnabled,
   load,
 };
