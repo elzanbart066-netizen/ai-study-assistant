@@ -12,7 +12,7 @@ import {
 } from "../../server/lib/validation.js";
 import { classifyQuestion } from "../../server/services/assistantService.js";
 import { parseSections, stripCodeFence } from "../../server/services/prompts.js";
-import { needsWebSearch } from "../../server/services/searchService.js";
+import { needsWebSearch, SearchService, searchLanguages, searchTerms } from "../../server/services/searchService.js";
 import { operationsOf, parseInstruction, DEFAULT_SETTINGS } from "../../src/services/imageOps.js";
 
 const code = (fn: () => unknown) => {
@@ -92,6 +92,28 @@ describe("assistant helpers", () => {
     expect(needsWebSearch("Последние новости науки")).toBe(true);
     expect(needsWebSearch("What happened in 2026?")).toBe(true);
     expect(needsWebSearch("Пифагор теоремасы")).toBe(false);
+  });
+
+  it("reduces questions to search terms", () => {
+    expect(searchTerms("Фотосинтез деген не?")).toBe("Фотосинтез");
+    expect(searchTerms("Абай Құнанбаев кім?")).toBe("Абай Құнанбаев");
+    expect(searchTerms("Что такое гравитация?")).toBe("гравитация");
+    expect(searchTerms("What is the speed of light?")).toBe("speed of light");
+    expect(searchLanguages("kk")).toEqual(["kk", "ru", "en"]);
+  });
+
+  it("falls back to other Wikipedia languages when the first has no article", async () => {
+    const asked: string[] = [];
+    const provider = {
+      async search(query: string, language: string) {
+        asked.push(`${language}:${query}`);
+        if (language === "kk") return [];
+        return [{ title: "Т", url: `https://${language}.wikipedia.org/wiki/T`, domain: `${language}.wikipedia.org`, extract: "x".repeat(60) }];
+      },
+    };
+    const hits = await new SearchService(provider, true).find("Фотосинтез деген не?", "kk");
+    expect(asked).toEqual(["kk:Фотосинтез", "ru:Фотосинтез"]);
+    expect(hits[0].domain).toBe("ru.wikipedia.org");
   });
 
   it("parses section markers and code fences from model output", () => {

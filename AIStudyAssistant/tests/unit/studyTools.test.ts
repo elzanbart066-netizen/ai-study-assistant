@@ -107,6 +107,34 @@ describe("offline code templates", () => {
     expect(detectTask("draw a cat")).toBeNull();
   });
 
+  it("covers the extended task list without false matches", () => {
+    expect(detectTask("Екі санның ЕҮОБ табу")).toBe("gcd");
+    expect(detectTask("найти НОД двух чисел")).toBe("gcd");
+    expect(detectTask("Сортировка списка оценок")).toBe("sort");
+    expect(detectTask("Тізімдегі ең үлкен санды табу")).toBe("maxmin");
+    expect(detectTask("Сан жұп па, тақ па?")).toBe("evenodd");
+    expect(detectTask("Is 2024 a leap year?")).toBe("leapyear");
+    expect(detectTask("Көбейту кестесін шығару")).toBe("table");
+    expect(detectTask("сумма цифр числа")).toBe("digits");
+    expect(detectTask("binary search in an array")).toBe("binsearch");
+    expect(detectTask("Цельсийді Фаренгейтке айналдыру")).toBe("temperature");
+    expect(detectTask("Сөйлемдегі сөздер санын есептеу")).toBe("words");
+    expect(detectTask("Hello world бағдарламасы")).toBe("hello");
+    expect(detectTask("seven eleven")).toBeNull();
+  });
+
+  it("has code, a sample and an explanation for every task in every language", () => {
+    const prompts = ["factorial", "gcd", "binary search", "count words", "celsius", "leap year", "multiplication table", "sum of digits", "maximum", "even", "hello"];
+    for (const prompt of prompts) {
+      for (const lang of ["python", "javascript", "java", "cpp", "csharp"] as const) {
+        const r = codeFromTemplate(prompt, lang, "kk");
+        expect(r?.code.length, `${prompt}/${lang}`).toBeGreaterThan(20);
+        expect(r?.explanation.length).toBeGreaterThan(10);
+        expect(r?.sampleOutput.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
   it("returns code in the requested language with a sample", () => {
     const r = codeFromTemplate("factorial", "java", "en");
     expect(r?.code).toContain("public class Main");
