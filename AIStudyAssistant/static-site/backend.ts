@@ -27,9 +27,10 @@ const MAX_UPLOAD = 5 * 1024 * 1024;
 const store = new MemoryStore();
 // Same public methods as the server storage, kept in memory.
 const storage = new FileStorage() as unknown as ServerFileStorage;
-const ai = new BrowserAIProvider();
 // Browsers refuse a custom User-Agent on cross-site requests, so only the signal is passed on.
 const search = new SearchService(new WikipediaSearch((url, init) => fetch(url, { signal: init?.signal })), true);
+let currentLanguage: Language = "kk";
+const ai = new BrowserAIProvider(search, () => currentLanguage);
 const auth = new AuthService(store);
 const history = new HistoryService(store, storage);
 const assistant = new AssistantService(ai, search);
@@ -64,7 +65,10 @@ export async function handle(method: string, url: string, body: Body = {}): Prom
     if (!user) throw new AppError("UNAUTHORIZED", "login required");
     return user;
   };
-  const lang = (): Language => (body.language ? validateLanguage(body.language) : (user?.language ?? "kk"));
+  const lang = (): Language => {
+    currentLanguage = body.language ? validateLanguage(body.language) : (user?.language ?? "kk");
+    return currentLanguage;
+  };
   const route = `${method} ${path}`;
   const historyId = path.match(/^\/history\/([^/]+)(\/saved)?$/);
 

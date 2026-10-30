@@ -1712,3 +1712,27 @@ pre.io {
     transition: none !important;
   }
 }
+
+.progress {
+  position: relative;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--card-2);
+  overflow: hidden;
+}
+
+.progress span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: var(--border);
+  transition: width 0.3s ease;
+}
+
+.progress small {
+  position: relative;
+  display: block;
+  padding: 4px 10px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}

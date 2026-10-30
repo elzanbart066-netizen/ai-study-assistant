@@ -28,9 +28,9 @@ export function classifyQuestion(prompt: string): QuestionKind {
 }
 
 const OFFLINE_NOTE: Record<Language, string> = {
-  kk: "AI моделі қосылмаған, сондықтан жауап Википедиядағы мақаланың қысқаша мазмұнынан құралды. Толық түсіндіру мен мысал үшін Claude API кілті керек: сайттың онлайн нұсқасында оны Профиль бетінде қосуға болады.",
-  ru: "AI-модель не подключена, поэтому ответ составлен из краткого содержания статьи Википедии. Для подробного объяснения и примера нужен ключ Claude API: в онлайн-версии сайта его можно добавить в Профиле.",
-  en: "No AI model is configured, so this answer is built from a Wikipedia article summary. Full explanations and examples need a Claude API key: on the online version of the site you can add it in Profile.",
+  kk: "AI моделі қосылмаған, сондықтан жауап Википедиядағы мақаланың қысқаша мазмұнынан құралды. Толық түсіндіру мен мысал алу үшін сайттың онлайн нұсқасында Профиль бетінде тегін кілтсіз AI-ды немесе Claude API кілтін қосыңыз.",
+  ru: "AI-модель не подключена, поэтому ответ составлен из краткого содержания статьи Википедии. Для подробного объяснения и примера включите в Профиле онлайн-версии сайта бесплатный AI без ключа или добавьте ключ Claude API.",
+  en: "No AI model is configured, so this answer is built from a Wikipedia article summary. For full explanations and examples, turn on the free keyless AI or add a Claude API key in Profile on the online version of the site.",
 };
 
 const NO_CITATIONS: Record<Language, string> = {

@@ -1,5 +1,6 @@
 import { type FormEvent, useEffect, useState } from "react";
 import { ApiKeyCard } from "../components/ApiKeyCard.js";
+import { LocalModelCard } from "../components/LocalModelCard.js";
 import { ErrorBox, fieldError } from "../components/ErrorBox.js";
 import { useNotify } from "../components/Notification.js";
 import { PageHeader } from "../components/PageHeader.js";
@@ -78,6 +79,7 @@ export function ProfilePage() {
           </button>
         </div>
       </form>
+      {STATIC_SITE && <LocalModelCard />}
       {STATIC_SITE && <ApiKeyCard />}
     </div>
   );

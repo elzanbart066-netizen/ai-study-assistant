@@ -45,6 +45,7 @@ export default defineConfig({
     emptyOutDir: true,
     // The two DejaVu fonts are inlined so PDF export needs no extra requests.
     assetsInlineLimit: 2_000_000,
-    chunkSizeWarningLimit: 6000,
+    // The in-browser AI library (WebLLM) is one large chunk, loaded only when turned on.
+    chunkSizeWarningLimit: 7000,
   },
 });

@@ -21,3 +21,26 @@ export function writeApiKey(value: string) {
     // Storage blocked (private mode): the key lasts only until the page closes.
   }
 }
+
+/** Controls for the in-browser AI model; the static build registers it at startup. */
+export interface LocalModelControl {
+  /** Model name and license shown to the student. */
+  readonly label: string;
+  /** False when the browser has no WebGPU, so the model cannot run here. */
+  supported(): boolean;
+  enabled(): boolean;
+  /** Turns the model on (and downloads it the first time) or off. */
+  setEnabled(on: boolean): void;
+  /** Loads the model, reporting progress from 0 to 1; resolves when it is ready. */
+  load(onProgress?: (fraction: number) => void): Promise<void>;
+}
+
+let localModel: LocalModelControl | null = null;
+
+export function registerLocalModel(control: LocalModelControl) {
+  localModel = control;
+}
+
+export function getLocalModel(): LocalModelControl | null {
+  return localModel;
+}
