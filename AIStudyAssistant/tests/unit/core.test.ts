@@ -12,7 +12,7 @@ import {
 } from "../../server/lib/validation.js";
 import { classifyQuestion } from "../../server/services/assistantService.js";
 import { parseSections, stripCodeFence } from "../../server/services/prompts.js";
-import { needsWebSearch, SearchService, searchLanguages, searchTerms } from "../../server/services/searchService.js";
+import { fuzzyQuery, needsWebSearch, SearchService, searchLanguages, searchTerms } from "../../server/services/searchService.js";
 import { operationsOf, parseInstruction, DEFAULT_SETTINGS } from "../../src/services/imageOps.js";
 
 const code = (fn: () => unknown) => {
@@ -100,6 +100,10 @@ describe("assistant helpers", () => {
     expect(searchTerms("Что такое гравитация?")).toBe("гравитация");
     expect(searchTerms("What is the speed of light?")).toBe("speed of light");
     expect(searchLanguages("kk")).toEqual(["kk", "ru", "en"]);
+    expect(searchTerms("казакстан призденті кім?")).toBe("казакстан призденті");
+    expect(fuzzyQuery("казакстан призденті")).toBe("казакстан~ призденті~");
+    expect(fuzzyQuery("Абай")).toBe("Абай~");
+    expect(fuzzyQuery("ДНК")).toBe("ДНК");
   });
 
   it("falls back to other Wikipedia languages when the first has no article", async () => {
@@ -112,8 +116,22 @@ describe("assistant helpers", () => {
       },
     };
     const hits = await new SearchService(provider, true).find("Фотосинтез деген не?", "kk");
-    expect(asked).toEqual(["kk:Фотосинтез", "ru:Фотосинтез"]);
+    expect(asked).toEqual(["kk:Фотосинтез", "kk:Фотосинтез~", "ru:Фотосинтез"]);
     expect(hits[0].domain).toBe("ru.wikipedia.org");
+  });
+
+  it("retries a misspelled question with fuzzy matching before switching language", async () => {
+    const asked: string[] = [];
+    const provider = {
+      async search(query: string, language: string) {
+        asked.push(`${language}:${query}`);
+        if (!query.includes("~")) return [];
+        return [{ title: "Қазақстан Президенті", url: `https://${language}.wikipedia.org/wiki/P`, domain: `${language}.wikipedia.org`, extract: "x".repeat(60) }];
+      },
+    };
+    const hits = await new SearchService(provider, true).find("казакстан призденті кім?", "kk");
+    expect(asked).toEqual(["kk:казакстан призденті", "kk:казакстан~ призденті~"]);
+    expect(hits[0].title).toBe("Қазақстан Президенті");
   });
 
   it("parses section markers and code fences from model output", () => {

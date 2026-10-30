@@ -22,32 +22,37 @@ export class SearchService {
 
   /**
    * Returns hits ranked by the provider, dropping duplicates and empty extracts.
-   * The question is reduced to its key words first; if the student's language
-   * has no article, the other Wikipedia languages are tried in turn.
+   * The question is reduced to its key words first. Each Wikipedia language is
+   * searched as written, then with typo-tolerant matching (missing Kazakh
+   * letters, misspellings), before moving on to the next language.
    */
   async find(query: string, language: Language, limit = 3): Promise<SearchHit[]> {
     if (!this.enabled) {
       throw new AppError("SEARCH_UNAVAILABLE", "disabled");
     }
     const terms = searchTerms(query) || query;
+    const attempts = [...new Set([terms, fuzzyQuery(terms)])];
+    const languages = searchLanguages(language);
     let failures = 0;
-    for (const lang of searchLanguages(language)) {
-      let hits: SearchHit[];
-      try {
-        hits = await this.provider.search(terms, lang, limit);
-      } catch {
-        failures++;
-        continue;
+    for (const lang of languages) {
+      for (const attempt of attempts) {
+        let hits: SearchHit[];
+        try {
+          hits = await this.provider.search(attempt, lang, limit);
+        } catch {
+          failures++;
+          continue;
+        }
+        const seen = new Set<string>();
+        const unique = hits.filter((h) => {
+          if (seen.has(h.url)) return false;
+          seen.add(h.url);
+          return h.extract.length > 40;
+        });
+        if (unique.length > 0) return unique;
       }
-      const seen = new Set<string>();
-      const unique = hits.filter((h) => {
-        if (seen.has(h.url)) return false;
-        seen.add(h.url);
-        return h.extract.length > 40;
-      });
-      if (unique.length > 0) return unique;
     }
-    if (failures === searchLanguages(language).length) {
+    if (failures === languages.length * attempts.length) {
       throw new AppError("SEARCH_UNAVAILABLE", "search failed");
     }
     throw new AppError("NO_SOURCES", "no results");
@@ -94,4 +99,15 @@ export function searchTerms(prompt: string): string {
 /** The student's language first, then the larger Wikipedias: Russian, English, Kazakh. */
 export function searchLanguages(language: Language): Language[] {
   return [language, ...(["ru", "en", "kk"] as const).filter((l) => l !== language)];
+}
+
+/**
+ * Marks longer words for fuzzy matching (Wikipedia's `word~`, up to two edits),
+ * so "казакстан призденті" still finds "Қазақстан Президенті".
+ */
+export function fuzzyQuery(terms: string): string {
+  return terms
+    .split(" ")
+    .map((w) => ([...w].length >= 4 && !w.endsWith("~") ? `${w}~` : w))
+    .join(" ");
 }
