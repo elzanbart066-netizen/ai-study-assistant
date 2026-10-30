@@ -28,7 +28,7 @@ export class WikipediaSearch implements SearchProvider {
     try {
       const response = await this.fetchFn(`${base}?${query}`, {
         headers: { "User-Agent": "AIStudyAssistant/1.0 (educational project)" },
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(8_000),
       });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);

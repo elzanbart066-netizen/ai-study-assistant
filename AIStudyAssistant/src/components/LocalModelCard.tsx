@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useI18n } from "../i18n/I18nProvider.js";
 import { getLocalModel } from "../services/aiKey.js";
 import { useNotify } from "./Notification.js";
@@ -11,6 +11,27 @@ export function LocalModelCard() {
   const [on, setOn] = useState(model?.enabled() ?? false);
   const [progress, setProgress] = useState<number | null>(null);
   const [failed, setFailed] = useState(false);
+
+  // The model starts loading when the site opens; show that progress here too.
+  useEffect(() => {
+    if (!model?.enabled() || !model.supported()) return;
+    let active = true;
+    setProgress(0);
+    model
+      .load((p) => {
+        if (active) setProgress(p);
+      })
+      .catch(() => {
+        if (active) setFailed(true);
+      })
+      .finally(() => {
+        if (active) setProgress(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, [model]);
+
   if (!model) return null;
 
   const enable = async () => {

@@ -8,7 +8,11 @@ const MODEL_F16 = "Qwen3-1.7B-q4f16_1-MLC";
 const MODEL_F32 = "Qwen3-1.7B-q4f32_1-MLC";
 const FLAG = "ai-study-assistant.local-model";
 
+// Answers longer than this are cut short, so a slow device never keeps the student waiting.
+const ANSWER_TIME_LIMIT_MS = 60_000;
+
 let engine: Promise<MLCEngineInterface> | null = null;
+let loaded: MLCEngineInterface | null = null;
 const listeners = new Set<(fraction: number) => void>();
 
 function supported() {
@@ -33,6 +37,7 @@ function setEnabled(on: boolean) {
   if (!on && engine) {
     void engine.then((e) => e.unload()).catch(() => undefined);
     engine = null;
+    loaded = null;
   }
 }
 
@@ -48,14 +53,17 @@ function load(onProgress?: (fraction: number) => void): Promise<void> {
   if (!engine) {
     engine = (async () => {
       const [{ CreateMLCEngine }, model] = await Promise.all([import("@mlc-ai/web-llm"), pickModel()]);
-      return CreateMLCEngine(model, {
+      const created = await CreateMLCEngine(model, {
         initProgressCallback: (report: InitProgressReport) => {
           for (const listener of listeners) listener(report.progress);
         },
       });
+      loaded = created;
+      return created;
     })();
     engine.catch(() => {
       engine = null;
+      loaded = null;
     });
   }
   return engine.then(
@@ -69,21 +77,33 @@ function load(onProgress?: (fraction: number) => void): Promise<void> {
   );
 }
 
-/** Answers one request with the local model. */
+/** Starts loading the model in the background when the student turned it on earlier. */
+export function preloadLocalModel() {
+  if (supported() && enabled()) void load().catch(() => undefined);
+}
+
+/** Answers one request with the loaded local model; fails if it is still loading or too slow. */
 export async function completeLocally(system: string, prompt: string): Promise<string> {
-  await load();
-  const e = await engine!;
-  const reply = await e.chat.completions.create({
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: prompt },
-    ],
-    temperature: 0.4,
-    max_tokens: 1200,
-    extra_body: { enable_thinking: false },
-  });
-  const text = reply.choices[0]?.message?.content ?? "";
-  return text.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+  const e = loaded;
+  if (!e) throw new Error("local model is not loaded yet");
+  const timer = setTimeout(() => e.interruptGenerate(), ANSWER_TIME_LIMIT_MS);
+  try {
+    const reply = await e.chat.completions.create({
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: prompt },
+      ],
+      temperature: 0.4,
+      max_tokens: 800,
+      extra_body: { enable_thinking: false },
+    });
+    const choice = reply.choices[0];
+    const text = (choice?.message?.content ?? "").replace(/<think>[\s\S]*?<\/think>/g, "").trim();
+    if (!text || choice?.finish_reason === "abort") throw new Error("no answer in time");
+    return text;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export const localModel: LocalModelControl = {
@@ -94,4 +114,5 @@ export const localModel: LocalModelControl = {
   load,
 };
 
-export const localModelReady = () => supported() && enabled();
+/** True once the model is in memory; until then questions get the Wikipedia answer. */
+export const localModelReady = () => supported() && enabled() && loaded !== null;

@@ -228,9 +228,18 @@ describe("assistant with an AI provider", () => {
     const ok = await agent.post("/api/assistant/code").send({ prompt: "say hi", codeLanguage: "python" });
     expect(ok.body.result).toMatchObject({ code: "print('hi')", sampleInput: "", sampleOutput: "hi" });
     ai.down = true;
-    const down = await agent.post("/api/assistant/ask").send({ prompt: "Hello" });
+    const down = await agent.post("/api/assistant/code").send({ prompt: "write a compiler", codeLanguage: "python" });
     expect(down.status).toBe(503);
     expect(down.body.error.code).toBe("AI_UNAVAILABLE");
+  });
+
+  it("answers a question from Wikipedia when the AI is down", async () => {
+    const ai = new FakeAI();
+    ai.down = true;
+    const agent = await signUp(await makeApp(ai));
+    const res = await agent.post("/api/assistant/ask").send({ prompt: "Photosynthesis" });
+    expect(res.status).toBe(200);
+    expect(res.body.result.provider).toBe("offline");
   });
 });
 

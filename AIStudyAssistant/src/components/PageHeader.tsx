@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { Icon, type IconName } from "./Icon.js";
 
 export function PageHeader({ icon, title, lead, children }: { icon: IconName; title: string; lead: string; children?: ReactNode }) {
@@ -17,6 +17,12 @@ export function PageHeader({ icon, title, lead, children }: { icon: IconName; ti
 }
 
 export function Thinking({ text }: { text: string }) {
+  // A running counter shows the page has not frozen while a slow answer is prepared.
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setSeconds((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
   return (
     <div aria-live="polite" className="card thinking">
       <span className="dots" aria-hidden="true">
@@ -25,6 +31,7 @@ export function Thinking({ text }: { text: string }) {
         <i />
       </span>
       {text}
+      {seconds >= 3 && <span className="muted"> {seconds} s</span>}
     </div>
   );
 }

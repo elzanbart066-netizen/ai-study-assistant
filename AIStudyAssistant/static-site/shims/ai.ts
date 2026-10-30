@@ -43,8 +43,8 @@ export class BrowserAIProvider implements AIProvider {
     // The small model knows less than Claude, so questions that need facts get
     // Wikipedia extracts as reference material, cited as the answer's sources.
     const hits =
-      request.webSearch && this.search
-        ? await this.search.find(request.prompt, this.language(), 3).catch(() => [])
+      (request.webSearch || request.reference) && this.search
+        ? await this.search.find(request.prompt, this.language(), 3, 8_000).catch(() => [])
         : [];
     const reference = hits
       .map((h, i) => `[${i + 1}] ${h.title} (${h.url})\n${h.extract.slice(0, CONTEXT_CHARS)}`)

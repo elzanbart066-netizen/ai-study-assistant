@@ -10,7 +10,7 @@ import {
   validatePassword,
   validatePrompt,
 } from "../../server/lib/validation.js";
-import { classifyQuestion } from "../../server/services/assistantService.js";
+import { AssistantService, classifyQuestion } from "../../server/services/assistantService.js";
 import { parseSections, stripCodeFence } from "../../server/services/prompts.js";
 import { fuzzyQuery, needsWebSearch, SearchService, searchLanguages, searchTerms } from "../../server/services/searchService.js";
 import { operationsOf, parseInstruction, DEFAULT_SETTINGS } from "../../src/services/imageOps.js";
@@ -116,11 +116,35 @@ describe("assistant helpers", () => {
       },
     };
     const hits = await new SearchService(provider, true).find("Фотосинтез деген не?", "kk");
-    expect(asked).toEqual(["kk:Фотосинтез", "kk:Фотосинтез~", "ru:Фотосинтез"]);
+    // All languages are asked at once; the student's language would win if it had an article.
+    expect(asked).toEqual(["kk:Фотосинтез", "ru:Фотосинтез", "en:Фотосинтез"]);
     expect(hits[0].domain).toBe("ru.wikipedia.org");
   });
 
-  it("retries a misspelled question with fuzzy matching before switching language", async () => {
+  it("prefers the student's language when several Wikipedias have an article", async () => {
+    const provider = {
+      async search(_query: string, language: string) {
+        return [{ title: language, url: `https://${language}.wikipedia.org/wiki/T`, domain: `${language}.wikipedia.org`, extract: "x".repeat(60) }];
+      },
+    };
+    const hits = await new SearchService(provider, true).find("Абай", "kk");
+    expect(hits[0].domain).toBe("kk.wikipedia.org");
+  });
+
+  it("gives up when the search takes longer than its time budget", async () => {
+    let calls = 0;
+    const provider = {
+      async search() {
+        calls++;
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        return [];
+      },
+    };
+    await expect(new SearchService(provider, true).find("Қазақстан ыбырсқа мысал", "kk", 3, 20)).rejects.toMatchObject({ code: "NO_SOURCES" });
+    expect(calls).toBe(3);
+  });
+
+  it("retries a misspelled question with fuzzy matching", async () => {
     const asked: string[] = [];
     const provider = {
       async search(query: string, language: string) {
@@ -130,7 +154,8 @@ describe("assistant helpers", () => {
       },
     };
     const hits = await new SearchService(provider, true).find("казакстан призденті кім?", "kk");
-    expect(asked).toEqual(["kk:казакстан призденті", "kk:казакстан~ призденті~"]);
+    expect(asked.slice(0, 3).every((q) => !q.includes("~"))).toBe(true);
+    expect(asked[3]).toBe("kk:казакстан~ призденті~");
     expect(hits[0].title).toBe("Қазақстан Президенті");
   });
 
@@ -148,7 +173,8 @@ describe("assistant helpers", () => {
     };
     const hits = await new SearchService(provider, true).find("казахистаан прзиидент кім?", "kk");
     expect(hits[0].title).toBe("Қазақстан Президенті");
-    expect(asked).toEqual(["kk:казахистаан прзиидент", "kk:казахистаан~ прзиидент~", "kk:қазақстан президенті"]);
+    expect(asked).toContain("kk:қазақстан президенті");
+    expect(asked.indexOf("kk:қазақстан президенті")).toBeGreaterThan(asked.indexOf("en:казахистаан~ прзиидент~"));
   });
 
   it("falls back to single words when nothing matches the whole question", async () => {
@@ -164,7 +190,22 @@ describe("assistant helpers", () => {
     expect(hits[0].title).toBe("Қазақстан");
     // Every language is tried with the whole question before single words.
     expect(asked).toContain("en:Қазақстан~ ыбырсқа~");
-    expect(asked.at(-1)).toBe("kk:Қазақстан~");
+    expect(asked.indexOf("kk:Қазақстан~")).toBeGreaterThan(asked.indexOf("en:Қазақстан~ ыбырсқа~"));
+  });
+
+  it("answers from Wikipedia when the AI is too slow or fails", async () => {
+    const ai = {
+      available: true,
+      complete: () => Promise.reject(new AppError("AI_UNAVAILABLE", "timeout")),
+    };
+    const provider = {
+      async search() {
+        return [{ title: "Абай", url: "https://kk.wikipedia.org/wiki/A", domain: "kk.wikipedia.org", extract: "Абай Құнанбайұлы — ақын. Ол ағартушы болған." }];
+      },
+    };
+    const result = await new AssistantService(ai, new SearchService(provider, true)).ask({ prompt: "Абай кім?", language: "kk", webSearch: false });
+    expect(result.provider).toBe("offline");
+    expect(result.sources[0].title).toBe("Абай");
   });
 
   it("parses section markers and code fences from model output", () => {

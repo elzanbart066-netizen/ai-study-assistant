@@ -7,6 +7,8 @@ export interface CompletionRequest {
   system: string;
   prompt: string;
   webSearch: boolean;
+  /** The question may be grounded in encyclopedia articles (used by the on-device model). */
+  reference?: boolean;
   requestId?: string;
 }
 
