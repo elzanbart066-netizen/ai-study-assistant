@@ -82,7 +82,7 @@ export function AnswerCard({ title, provider, copyText, download, messageId, onR
           </button>
         )}
         {download?.href && (
-          <a className="btn btn-ghost btn-sm" download href={download.href}>
+          <a className="btn btn-ghost btn-sm" download={download.name} href={download.href}>
             <Icon name="download" size={16} />
             {t("action.download")}
           </a>

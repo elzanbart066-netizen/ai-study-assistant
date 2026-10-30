@@ -1,9 +1,11 @@
 import { type FormEvent, useEffect, useState } from "react";
+import { ApiKeyCard } from "../components/ApiKeyCard.js";
 import { ErrorBox, fieldError } from "../components/ErrorBox.js";
 import { useNotify } from "../components/Notification.js";
 import { PageHeader } from "../components/PageHeader.js";
 import { useI18n } from "../i18n/I18nProvider.js";
 import { LANGUAGES, type Language } from "../models/index.js";
+import { STATIC_SITE } from "../services/aiKey.js";
 import { useAuth } from "../services/AuthProvider.js";
 import { historyService, profileService } from "../services/index.js";
 
@@ -76,6 +78,7 @@ export function ProfilePage() {
           </button>
         </div>
       </form>
+      {STATIC_SITE && <ApiKeyCard />}
     </div>
   );
 }
