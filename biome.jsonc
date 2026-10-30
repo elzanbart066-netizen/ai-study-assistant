@@ -12,6 +12,7 @@
   "files": {
     "includes": [
       "**/*",
+      "!AIStudyAssistant",
       "!components/ai-elements",
       "!components/elements",
       "!components/ui",
