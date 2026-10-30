@@ -10,6 +10,9 @@ export function needsWebSearch(prompt: string): boolean {
   return TIME_SENSITIVE.test(prompt);
 }
 
+/** The whole search gives up after this long, so a slow network never leaves the student waiting. */
+const SEARCH_BUDGET_MS = 15_000;
+
 export class SearchService {
   constructor(
     private provider: SearchProvider,
@@ -23,18 +26,24 @@ export class SearchService {
   /**
    * Returns hits ranked by the provider, dropping duplicates and empty extracts.
    * The question is reduced to its key words first, then searched with
-   * progressively looser queries in each Wikipedia language: as written,
-   * typo-tolerant words, Wikipedia's own spelling suggestion, and finally the
-   * single words of the question, longest first.
+   * progressively looser queries: as written, typo-tolerant words, Wikipedia's
+   * own spelling suggestion, and finally the single words of the question,
+   * longest first. Each step asks every Wikipedia language at once and prefers
+   * the student's language; the whole search stops after `budgetMs`.
    */
-  async find(query: string, language: Language, limit = 3): Promise<SearchHit[]> {
+  async find(query: string, language: Language, limit = 3, budgetMs = SEARCH_BUDGET_MS): Promise<SearchHit[]> {
     if (!this.enabled) {
       throw new AppError("SEARCH_UNAVAILABLE", "disabled");
     }
     const terms = searchTerms(query) || query;
+    const deadline = Date.now() + budgetMs;
+    const languages = searchLanguages(language);
     let calls = 0;
     let failures = 0;
-    const attempt = async (q: string, lang: Language) => {
+    const tried = new Set<string>();
+    const run = async (q: string | null | undefined, lang: Language) => {
+      if (!q || tried.has(`${lang}:${q}`)) return [];
+      tried.add(`${lang}:${q}`);
       calls++;
       try {
         return dedupe(await this.provider.search(q, lang, limit));
@@ -43,37 +52,36 @@ export class SearchService {
         return [];
       }
     };
-
-    const tried = new Set<string>();
-    const run = async (q: string | null | undefined, lang: Language) => {
-      if (!q || tried.has(`${lang}:${q}`)) return [];
-      tried.add(`${lang}:${q}`);
-      return attempt(q, lang);
+    // One step: the same kind of query in every language at once, first non-empty wins.
+    const step = async (queryFor: (lang: Language) => string | null | undefined) => {
+      if (Date.now() > deadline) return [];
+      const results = await Promise.all(languages.map((lang) => run(queryFor(lang), lang)));
+      return results.find((r) => r.length > 0) ?? [];
     };
-    const languages = searchLanguages(language);
 
-    // Pass 1: the whole question, as written, typo-tolerant, and as Wikipedia would correct it.
-    for (const lang of languages) {
-      for (const q of [terms, fuzzyQuery(terms)]) {
-        const found = await run(q, lang);
+    for (const q of [terms, fuzzyQuery(terms)]) {
+      const found = await step(() => q);
+      if (found.length) return found;
+    }
+    // Spelling suggestions are fetched only when the plain and fuzzy queries found nothing.
+    if (this.provider.suggest && Date.now() <= deadline) {
+      const suggest = this.provider.suggest.bind(this.provider);
+      const list = await Promise.all(languages.map((lang) => suggest(terms, lang).catch(() => null)));
+      const suggestions = new Map(languages.map((lang, i) => [lang, list[i]]));
+      for (const fuzzy of [false, true]) {
+        const found = await step((lang) => {
+          const suggestion = suggestions.get(lang);
+          return suggestion && (fuzzy ? fuzzyQuery(suggestion) : suggestion);
+        });
         if (found.length) return found;
       }
-      if (this.provider.suggest) {
-        const suggestion = await this.provider.suggest(terms, lang).catch(() => null);
-        for (const q of [suggestion, suggestion && fuzzyQuery(suggestion)]) {
-          const found = await run(q, lang);
-          if (found.length) return found;
-        }
-      }
     }
-    // Pass 2: single words, longest first, when no article matches the whole question.
+    // Single words, longest first, when no article matches the whole question.
     const words = terms.split(" ").filter((w) => [...w].length >= 4);
     if (words.length > 1) {
-      for (const lang of languages) {
-        for (const word of [...words].sort((x, y) => [...y].length - [...x].length)) {
-          const found = await run(fuzzyQuery(word), lang);
-          if (found.length) return found;
-        }
+      for (const word of [...words].sort((x, y) => [...y].length - [...x].length).slice(0, 3)) {
+        const found = await step(() => fuzzyQuery(word));
+        if (found.length) return found;
       }
     }
     if (calls > 0 && failures === calls) {

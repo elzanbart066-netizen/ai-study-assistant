@@ -64,13 +64,22 @@ export class AssistantService {
 
   async ask(input: AskInput): Promise<AskResult> {
     const useWeb = (input.webSearch || needsWebSearch(input.prompt)) && this.search.available;
-    if (this.ai.available) {
-      const response = await this.ai.complete({
-        system: askSystem(input.language),
-        prompt: input.prompt,
-        webSearch: useWeb,
-        requestId: input.requestId,
-      });
+    const response = this.ai.available
+      ? await this.ai
+          .complete({
+            system: askSystem(input.language),
+            prompt: input.prompt,
+            webSearch: useWeb,
+            reference: this.search.available,
+            requestId: input.requestId,
+          })
+          .catch((error: unknown) => {
+            // A failed or too slow AI still leaves the Wikipedia answer below.
+            if (error instanceof AppError && error.code === "AI_UNAVAILABLE" && this.search.available) return null;
+            throw error;
+          })
+      : null;
+    if (response) {
       const s = parseSections(response.text);
       const uncertainty = [s.get("UNCERTAINTY") ?? ""]
         .filter((u) => u && u !== "-")

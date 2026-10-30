@@ -9,10 +9,11 @@ import { AuthProvider } from "../src/services/AuthProvider.js";
 import "../src/styles/main.css";
 import { setLogSink } from "../server/lib/logger.js";
 import { registerLocalModel } from "../src/services/aiKey.js";
-import { localModel } from "./localModel.js";
+import { localModel, preloadLocalModel } from "./localModel.js";
 
 setLogSink((line) => console.warn(line));
 registerLocalModel(localModel);
+preloadLocalModel();
 
 const root = document.getElementById("root");
 if (root) {
