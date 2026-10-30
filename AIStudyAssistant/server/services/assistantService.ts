@@ -11,6 +11,7 @@ import { WIKIPEDIA_LICENSE } from "../integrations/wikipedia.js";
 import { askSystem, codeSystem, parseSections, solveSystem, splitLines, stripCodeFence } from "./prompts.js";
 import { needsWebSearch, SearchService, sentences } from "./searchService.js";
 import { codeFromTemplate } from "./studyTools/codeTemplates.js";
+import { codeFromData, readsInput, taskData } from "./studyTools/dataTasks.js";
 import { solveLocally } from "./studyTools/mathSolver.js";
 
 export type QuestionKind = "math" | "logic" | "code" | "general";
@@ -132,23 +133,36 @@ export class AssistantService {
   }
 
   async code(prompt: string, codeLanguage: CodeLanguage, language: Language, requestId?: string): Promise<CodeResult> {
+    // List tasks on the student's own data get exact, checked code without the AI.
+    const exact = codeFromData(prompt, codeLanguage, language);
+    if (exact) return exact;
     if (this.ai.available) {
-      const response = await this.ai.complete({
-        system: codeSystem(language, codeLanguage),
-        prompt,
-        webSearch: false,
-        requestId,
-      });
-      const s = parseSections(response.text);
-      const dash = (v: string | undefined) => (v && v !== "-" ? stripCodeFence(v) : "");
-      return {
-        language: codeLanguage,
-        code: stripCodeFence(s.get("CODE") ?? response.text),
-        explanation: s.get("EXPLANATION") ?? "",
-        sampleInput: dash(s.get("INPUT")),
-        sampleOutput: dash(s.get("OUTPUT")),
-        provider: "ai",
+      const data = taskData(prompt);
+      const task = data
+        ? `${prompt}\n\nData given in the task (write it into the program exactly, do not read it from input): ${JSON.stringify(data)}`
+        : prompt;
+      const ask = async (text: string) => {
+        const response = await this.ai.complete({ system: codeSystem(language, codeLanguage), prompt: text, webSearch: false, requestId });
+        const s = parseSections(response.text);
+        const dash = (v: string | undefined) => (v && v !== "-" ? stripCodeFence(v) : "");
+        return {
+          language: codeLanguage,
+          code: stripCodeFence(s.get("CODE") ?? response.text),
+          explanation: s.get("EXPLANATION") ?? "",
+          sampleInput: dash(s.get("INPUT")),
+          sampleOutput: dash(s.get("OUTPUT")),
+          provider: "ai" as const,
+        };
       };
+      const first = await ask(task);
+      // Small models often ignore the data and read input; ask once more with the mistake named.
+      if (data && readsInput(first.code)) {
+        const retry = await ask(
+          `${task}\n\nYour previous program read input from the user. Rewrite it: put the given data directly in the code and do only the steps the task asks for.`,
+        ).catch(() => first);
+        return readsInput(retry.code) ? first : retry;
+      }
+      return first;
     }
     const template = codeFromTemplate(prompt, codeLanguage, language);
     if (!template) {
