@@ -12,6 +12,7 @@ import {
 } from "../../server/lib/validation.js";
 import { AssistantService, classifyQuestion } from "../../server/services/assistantService.js";
 import { parseSections, stripCodeFence } from "../../server/services/prompts.js";
+import { codeFromData, parseDataTask, readsInput, runDataTask } from "../../server/services/studyTools/dataTasks.js";
 import { fuzzyQuery, needsWebSearch, SearchService, searchLanguages, searchTerms } from "../../server/services/searchService.js";
 import { operationsOf, parseInstruction, parseRecolor, DEFAULT_SETTINGS } from "../../src/services/imageOps.js";
 import { recolorPixels, resizeMask, targetShare } from "../../src/services/aiImageEdit.js";
@@ -207,6 +208,51 @@ describe("assistant helpers", () => {
     const result = await new AssistantService(ai, new SearchService(provider, true)).ask({ prompt: "Абай кім?", language: "kk", webSearch: false });
     expect(result.provider).toBe("offline");
     expect(result.sources[0].title).toBe("Абай");
+  });
+
+  it("turns a list task on the student's own data into exact code", () => {
+    const prompt = "али елжан думан нуржан саят берілген аттарды колданып орында әліппедегі бас әріптерін ала отырып осыларды массивке салып әліппе ретімен сорттап бер";
+    const task = parseDataTask(prompt);
+    expect(task?.data).toEqual(["Али", "Елжан", "Думан", "Нуржан", "Саят"]);
+    expect(task?.steps.map((s) => s.kind)).toEqual(["first", "sort"]);
+    const result = codeFromData(prompt, "python", "kk");
+    expect(result?.sampleOutput).toBe("А, Д, Е, Н, С");
+    expect(result?.code).toContain('"Али"');
+    expect(readsInput(result?.code ?? "")).toBe(false);
+    for (const language of ["javascript", "java", "cpp", "csharp"] as const) {
+      expect(codeFromData(prompt, language, "kk")?.code).toContain("Саят");
+    }
+  });
+
+  it("computes other list tasks and leaves the rest to the AI", () => {
+    const run = (p: string) => runDataTask(parseDataTask(p)!);
+    expect(run("5, 3, 8, 1, 9, 2 сандарының қосындысын тап")).toBe(28);
+    expect(run("12 7 3 18 5 сандарының ішінен жұп сандарды алып, өсу ретімен сұрыпта")).toEqual([12, 18]);
+    expect(run("Аттар: Али, Елжан, Думан, Нұржан, Саят. Бірінші әріптерін алып, кему ретімен сұрыпта")).toEqual(["С", "Н", "Е", "Д", "А"]);
+    expect(run("10 20 30 сандарының ең үлкенін тап")).toBe(30);
+    expect(parseDataTask("али елжан берілген аттардың әрқайсысына сәлем жаз")).toBeNull();
+    expect(parseDataTask("n санының факториалы")).toBeNull();
+  });
+
+  it("gives the AI the task data and retries once when its code reads input", async () => {
+    const prompts: string[] = [];
+    const replies = ["## CODE\n```python\nnames = input().split()\n```\n## OUTPUT\n-", "## CODE\n```python\nprint([n for n in ['Али', 'Елжан'] ])\n```\n## OUTPUT\n-"];
+    const ai = {
+      available: true,
+      complete: async (req: { prompt: string }) => {
+        prompts.push(req.prompt);
+        return { text: replies[prompts.length - 1] };
+      },
+    };
+    const result = await new AssistantService(ai as never, new SearchService({ search: async () => [] }, false)).code(
+      "али, елжан берілген аттардың әрқайсысына сәлем жаз",
+      "python",
+      "kk",
+    );
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]).toContain('["али","елжан"]');
+    expect(result.code).not.toContain("input(");
+    expect(readsInput("x = int(input())")).toBe(true);
   });
 
   it("parses section markers and code fences from model output", () => {

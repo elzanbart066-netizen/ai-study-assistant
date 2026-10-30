@@ -50,6 +50,10 @@ const CODE_NAME: Record<CodeLanguage, string> = {
 export function codeSystem(lang: Language, language: CodeLanguage): string {
   return `${BASE(lang)}
 Write correct, readable ${CODE_NAME[language]} code for the task. Prefer the standard library. Code comments may be in English.
+Rules:
+- If the task gives data (names, words, numbers), write exactly that data into the program. Do not read input, unless the task asks to read it.
+- Do exactly the steps the task asks for, in that order, and print the result. Add nothing else.
+- The OUTPUT must be what this exact program prints.
 Answer format:
 ## CODE
 The complete program in a single fenced code block.
