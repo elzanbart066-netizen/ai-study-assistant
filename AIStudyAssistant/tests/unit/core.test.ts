@@ -134,6 +134,39 @@ describe("assistant helpers", () => {
     expect(hits[0].title).toBe("Қазақстан Президенті");
   });
 
+  it("uses Wikipedia's spelling suggestion for bigger mistakes", async () => {
+    const asked: string[] = [];
+    const hit = { title: "Қазақстан Президенті", url: "https://kk.wikipedia.org/wiki/P", domain: "kk.wikipedia.org", extract: "x".repeat(60) };
+    const provider = {
+      async search(query: string, language: string) {
+        asked.push(`${language}:${query}`);
+        return query === "қазақстан президенті" ? [hit] : [];
+      },
+      async suggest() {
+        return "қазақстан президенті";
+      },
+    };
+    const hits = await new SearchService(provider, true).find("казахистаан прзиидент кім?", "kk");
+    expect(hits[0].title).toBe("Қазақстан Президенті");
+    expect(asked).toEqual(["kk:казахистаан прзиидент", "kk:казахистаан~ прзиидент~", "kk:қазақстан президенті"]);
+  });
+
+  it("falls back to single words when nothing matches the whole question", async () => {
+    const asked: string[] = [];
+    const provider = {
+      async search(query: string, language: string) {
+        asked.push(`${language}:${query}`);
+        if (query !== "Қазақстан~") return [];
+        return [{ title: "Қазақстан", url: "https://kk.wikipedia.org/wiki/K", domain: "kk.wikipedia.org", extract: "x".repeat(60) }];
+      },
+    };
+    const hits = await new SearchService(provider, true).find("Қазақстан ыбырсқа", "kk");
+    expect(hits[0].title).toBe("Қазақстан");
+    // Every language is tried with the whole question before single words.
+    expect(asked).toContain("en:Қазақстан~ ыбырсқа~");
+    expect(asked.at(-1)).toBe("kk:Қазақстан~");
+  });
+
   it("parses section markers and code fences from model output", () => {
     const s = parseSections("## SUMMARY\nShort.\n## EXPLANATION\nLong\ntext\n## SECTION: Intro\nP1");
     expect(s.get("SUMMARY")).toBe("Short.");
