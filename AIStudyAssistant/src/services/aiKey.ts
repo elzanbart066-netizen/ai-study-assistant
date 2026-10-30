@@ -3,24 +3,33 @@
 
 export const STATIC_SITE = import.meta.env.VITE_STATIC_SITE === "1";
 
-const STORAGE_KEY = "ai-study-assistant.anthropic-key";
+export type KeyKind = "claude" | "gemini";
 
-export function readApiKey(): string {
+// A free Google Gemini key (aistudio.google.com) is the no-cost way to a strong model.
+const STORAGE_KEYS: Record<KeyKind, string> = {
+  claude: "ai-study-assistant.anthropic-key",
+  gemini: "ai-study-assistant.gemini-key",
+};
+
+export function readApiKey(kind: KeyKind = "claude"): string {
   try {
-    return localStorage.getItem(STORAGE_KEY) ?? "";
+    return localStorage.getItem(STORAGE_KEYS[kind]) ?? "";
   } catch {
     return "";
   }
 }
 
-export function writeApiKey(value: string) {
+export function writeApiKey(value: string, kind: KeyKind = "claude") {
   try {
-    if (value) localStorage.setItem(STORAGE_KEY, value);
-    else localStorage.removeItem(STORAGE_KEY);
+    if (value) localStorage.setItem(STORAGE_KEYS[kind], value);
+    else localStorage.removeItem(STORAGE_KEYS[kind]);
   } catch {
     // Storage blocked (private mode): the key lasts only until the page closes.
   }
 }
+
+/** True when the student saved a key for a hosted AI (Claude or Gemini). */
+export const hasHostedKey = () => readApiKey("claude") !== "" || readApiKey("gemini") !== "";
 
 /** Controls for the in-browser AI model; the static build registers it at startup. */
 export interface LocalModelControl {

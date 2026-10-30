@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useI18n } from "../i18n/I18nProvider.js";
 import type { MessageKey } from "../i18n/dictionary.js";
-import { getLocalModel } from "../services/aiKey.js";
+import { getLocalModel, hasHostedKey } from "../services/aiKey.js";
 import { ApiError } from "../services/api.js";
 import { Icon } from "./Icon.js";
 
@@ -29,7 +29,8 @@ export function ErrorBox({ error, onRetry }: { error: unknown; onRetry?: () => v
   const { t } = useI18n();
   if (!error) return null;
   const requestId = error instanceof ApiError ? error.requestId : undefined;
-  const noAi = error instanceof ApiError && error.code === "AI_UNAVAILABLE";
+  // With a Gemini or Claude key the AI is connected; its own errors need no model offer.
+  const noAi = error instanceof ApiError && error.code === "AI_UNAVAILABLE" && !hasHostedKey();
   return (
     <div className="alert alert-error" role="alert">
       <Icon name="alert" />

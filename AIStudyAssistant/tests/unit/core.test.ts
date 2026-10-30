@@ -12,6 +12,7 @@ import {
 } from "../../server/lib/validation.js";
 import { AssistantService, classifyQuestion, weakCode } from "../../server/services/assistantService.js";
 import { exerciseFor, exerciseTopic } from "../../server/services/studyTools/exercises.js";
+import { GeminiProvider } from "../../server/integrations/gemini.js";
 import { parseSections, stripCodeFence } from "../../server/services/prompts.js";
 import { codeFromData, parseDataTask, readsInput, runDataTask } from "../../server/services/studyTools/dataTasks.js";
 import { fuzzyQuery, needsWebSearch, SearchService, searchLanguages, searchTerms } from "../../server/services/searchService.js";
@@ -251,6 +252,35 @@ describe("assistant helpers", () => {
     ]);
     // "тақ" (odd) inside "пернетақтадан" is not a step.
     expect(parseDataTask("пернетақтадан сөздер енгізіп, кері ретпен шығар")?.steps).toEqual([{ kind: "reverse" }]);
+  });
+
+  it("calls Gemini with the student's key and reads its answer", async () => {
+    const calls: { url: string; body: { tools?: unknown; systemInstruction: { parts: { text: string }[] } }; key: string }[] = [];
+    const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), { status });
+    const fetcher = (async (url: string, init: RequestInit) => {
+      calls.push({ url, body: JSON.parse(String(init.body)), key: (init.headers as Record<string, string>)["x-goog-api-key"] });
+      if (calls.length === 1) return reply(404, {});
+      return reply(200, {
+        candidates: [
+          {
+            content: { parts: [{ text: "thinking", thought: true }, { text: "## CODE\nprint(1)" }] },
+            groundingMetadata: { groundingChunks: [{ web: { uri: "https://example.org/a", title: "example.org" } }] },
+          },
+        ],
+      });
+    }) as typeof fetch;
+    const gemini = new GeminiProvider(() => "AIza-test", fetcher);
+    const result = await gemini.complete({ system: "sys", prompt: "hi", webSearch: true });
+    expect(result.text).toBe("## CODE\nprint(1)");
+    expect(result.citations).toEqual([{ title: "example.org", url: "https://example.org/a", domain: "example.org" }]);
+    expect(calls[0].url).toContain("gemini-flash-latest");
+    expect(calls[1].url).toContain("gemini-2.5-flash");
+    expect(calls[1].key).toBe("AIza-test");
+    expect(calls[1].body.systemInstruction.parts[0].text).toBe("sys");
+    expect(calls[1].body.tools).toBeDefined();
+
+    const denied = new GeminiProvider(() => "bad", (async () => reply(403, {})) as unknown as typeof fetch);
+    await expect(denied.complete({ system: "s", prompt: "p", webSearch: false })).rejects.toMatchObject({ code: "AI_UNAVAILABLE", message: "geminiKey" });
   });
 
   it("gives a complete practice problem when asked for one", () => {

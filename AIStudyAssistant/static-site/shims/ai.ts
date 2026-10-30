@@ -1,6 +1,7 @@
-// Browser version of the AI integration. With the student's own key, Claude is
-// called straight from the page (see src/services/aiKey.ts); without one, a
-// small model can run on the device, grounded in Wikipedia articles.
+// Browser version of the AI integration. With the student's own key, Claude or
+// Google Gemini (free key) is called straight from the page (see
+// src/services/aiKey.ts); without one, a small model can run on the device,
+// grounded in Wikipedia articles.
 import Anthropic from "@anthropic-ai/sdk";
 import {
   type AIProvider,
@@ -13,7 +14,8 @@ import {
 import { AppError } from "../../server/lib/errors.js";
 import type { SearchService } from "../../server/services/searchService.js";
 import type { Language } from "../../src/models/index.js";
-import { readApiKey } from "../../src/services/aiKey.js";
+import { hasHostedKey, readApiKey } from "../../src/services/aiKey.js";
+import { GeminiProvider } from "../../server/integrations/gemini.js";
 import { completeLocally, localModelReady } from "../localModel.js";
 
 export { type AIProvider, AnthropicProvider, type CompletionRequest, type CompletionResult, DisabledAIProvider, domainOf };
@@ -28,11 +30,11 @@ export class BrowserAIProvider implements AIProvider {
   ) {}
 
   get available() {
-    return readApiKey() !== "" || localModelReady();
+    return hasHostedKey() || localModelReady();
   }
 
   get onDevice() {
-    return readApiKey() === "";
+    return !hasHostedKey();
   }
 
   complete(request: CompletionRequest): Promise<CompletionResult> {
@@ -40,6 +42,7 @@ export class BrowserAIProvider implements AIProvider {
       const client = new Anthropic({ apiKey: readApiKey(), dangerouslyAllowBrowser: true });
       return new AnthropicProvider(MODEL, client).complete(request);
     }
+    if (readApiKey("gemini")) return new GeminiProvider(() => readApiKey("gemini")).complete(request);
     return this.completeOnDevice(request);
   }
 
