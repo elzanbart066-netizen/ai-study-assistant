@@ -47,13 +47,42 @@ const CODE_NAME: Record<CodeLanguage, string> = {
   csharp: "C# 10",
 };
 
-export function codeSystem(lang: Language, language: CodeLanguage): string {
+// One worked answer for the small on-device model, which follows an example far better than rules.
+const CODE_EXAMPLE = `
+
+Example. Task: "циклдар туралы есеп бер" (give a problem about loops), language Python. Answer:
+## CODE
+\`\`\`python
+# Problem: print the numbers from 1 to n that divide by 7, their count and their sum.
+def multiples_of_seven(n):
+    found = []
+    for i in range(1, n + 1):
+        if i % 7 == 0:
+            found.append(i)
+    return found
+
+
+for n in [20, 50]:
+    numbers = multiples_of_seven(n)
+    print(f"n = {n}: {numbers}, count {len(numbers)}, sum {sum(numbers)}")
+\`\`\`
+## EXPLANATION
+The function loops from 1 to n and keeps each number whose remainder after division by 7 is 0. The calls at the end try two values of n.
+## INPUT
+-
+## OUTPUT
+n = 20: [7, 14], count 2, sum 21
+n = 50: [7, 14, 21, 28, 35, 42, 49], count 7, sum 196`;
+
+export function codeSystem(lang: Language, language: CodeLanguage, example = false): string {
   return `${BASE(lang)}
 Write correct, readable ${CODE_NAME[language]} code for the task. Prefer the standard library. Code comments may be in English.
+Write a complete program that runs as it is: the needed functions, then calls that show the result with example values. Never answer with a stub, a placeholder or code that only returns the task text.
+If the student asks you to give or make up a problem (for example "есеп бер", "дай задачу", "give me a problem"), invent a concrete problem on that topic, write its statement as a comment at the top of the code, then the full solution with several example calls.
 Rules:
 - If the task gives data (names, words, numbers), write exactly that data into the program. Do not read input, unless the task asks to read it.
 - Do exactly the steps the task asks for, in that order, and print the result. Add nothing else.
-- The OUTPUT must be what this exact program prints.
+- The OUTPUT must be what this exact program prints.${example ? CODE_EXAMPLE : ""}
 Answer format:
 ## CODE
 The complete program in a single fenced code block.

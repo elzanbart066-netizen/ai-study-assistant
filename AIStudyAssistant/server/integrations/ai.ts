@@ -9,6 +9,8 @@ export interface CompletionRequest {
   webSearch: boolean;
   /** The question may be grounded in encyclopedia articles (used by the on-device model). */
   reference?: boolean;
+  /** Longer answers allowed (code); only the on-device model needs the hint. */
+  maxTokens?: number;
   requestId?: string;
 }
 
@@ -22,6 +24,8 @@ export interface CompletionResult {
 /** Contract for the language-model integration; the provider is swappable. */
 export interface AIProvider {
   readonly available: boolean;
+  /** True for the small keyless model in the browser, which needs more help than Claude. */
+  readonly onDevice?: boolean;
   complete(request: CompletionRequest): Promise<CompletionResult>;
 }
 

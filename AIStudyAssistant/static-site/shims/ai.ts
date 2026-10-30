@@ -31,6 +31,10 @@ export class BrowserAIProvider implements AIProvider {
     return readApiKey() !== "" || localModelReady();
   }
 
+  get onDevice() {
+    return readApiKey() === "";
+  }
+
   complete(request: CompletionRequest): Promise<CompletionResult> {
     if (readApiKey()) {
       const client = new Anthropic({ apiKey: readApiKey(), dangerouslyAllowBrowser: true });
@@ -53,7 +57,7 @@ export class BrowserAIProvider implements AIProvider {
       ? `${request.prompt}\n\nReference material from Wikipedia (CC BY-SA 4.0). Base the answer on it:\n\n${reference}`
       : request.prompt;
     try {
-      const text = await completeLocally(request.system, prompt);
+      const text = await completeLocally(request.system, prompt, request.maxTokens);
       return {
         text,
         citations: hits.map(({ title, url, domain }) => ({ title, url, domain })),

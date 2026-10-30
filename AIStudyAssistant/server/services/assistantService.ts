@@ -12,6 +12,7 @@ import { askSystem, codeSystem, parseSections, solveSystem, splitLines, stripCod
 import { needsWebSearch, SearchService, sentences } from "./searchService.js";
 import { codeFromTemplate } from "./studyTools/codeTemplates.js";
 import { codeFromData, readsInput, taskData } from "./studyTools/dataTasks.js";
+import { anyTopic, exerciseFor } from "./studyTools/exercises.js";
 import { solveLocally } from "./studyTools/mathSolver.js";
 
 export type QuestionKind = "math" | "logic" | "code" | "general";
@@ -136,13 +137,24 @@ export class AssistantService {
     // List tasks on the student's own data get exact, checked code without the AI.
     const exact = codeFromData(prompt, codeLanguage, language);
     if (exact) return exact;
+    // "Give me a problem about functions": the small keyless model answers these with a stub,
+    // so it gets a complete hand-written problem and solution instead. Claude writes its own.
+    const small = !this.ai.available || this.ai.onDevice === true;
+    const exercise = small ? exerciseFor(prompt, codeLanguage, language) : null;
+    if (exercise) return exercise;
     if (this.ai.available) {
       const data = taskData(prompt);
       const task = data
         ? `${prompt}\n\nData given in the task (write it into the program exactly, do not read it from input): ${JSON.stringify(data)}`
         : prompt;
       const ask = async (text: string) => {
-        const response = await this.ai.complete({ system: codeSystem(language, codeLanguage), prompt: text, webSearch: false, requestId });
+        const response = await this.ai.complete({
+          system: codeSystem(language, codeLanguage, this.ai.onDevice === true),
+          prompt: text,
+          webSearch: false,
+          maxTokens: 1500,
+          requestId,
+        });
         const s = parseSections(response.text);
         const dash = (v: string | undefined) => (v && v !== "-" ? stripCodeFence(v) : "");
         return {
@@ -162,7 +174,18 @@ export class AssistantService {
         ).catch(() => first);
         return readsInput(retry.code) ? first : retry;
       }
-      return first;
+      if (!weakCode(first.code, prompt)) return first;
+      // A stub or the task text echoed back: ask once more, then fall back to a built-in solution.
+      const retry = await ask(
+        `${task}\n\nYour previous answer was not a working program (too short, or it only repeated the task). Write the complete program with functions, example calls and printed results.`,
+      ).catch(() => first);
+      if (!weakCode(retry.code, prompt)) return retry;
+      const topic = anyTopic(prompt);
+      return (
+        codeFromTemplate(prompt, codeLanguage, language) ??
+        (topic ? exerciseFor(prompt, codeLanguage, language, topic) : null) ??
+        retry
+      );
     }
     const template = codeFromTemplate(prompt, codeLanguage, language);
     if (!template) {
@@ -170,4 +193,13 @@ export class AssistantService {
     }
     return template;
   }
+}
+
+/** True when "code" is a stub: a few lines, nothing printed, or the task text handed back. */
+export function weakCode(code: string, prompt: string): boolean {
+  const lines = code.split("\n").filter((l) => l.trim() && !/^\s*(#|\/\/)/.test(l));
+  if (lines.length < 5) return true;
+  if (!/print|console\.log|System\.out|cout|Console\.Write|printf|puts/.test(code)) return true;
+  const words = prompt.trim().toLowerCase();
+  return words.length >= 12 && code.toLowerCase().includes(words.slice(0, 40));
 }
