@@ -239,19 +239,30 @@ const OBJECTS: [RegExp, string][] = [
   [/^(доп|мяч|ball$)/u, "ball"],
 ];
 
+// Students often type Kazakh on a Russian keyboard ("кара" for "қара", "туске" for "түске"),
+// so words and patterns are compared with Kazakh letters folded into their look-alikes.
+const FOLD: Record<string, string> = { қ: "к", ғ: "г", ң: "н", ү: "у", ұ: "у", ө: "о", ә: "а", і: "и", һ: "х", ё: "е" };
+const fold = (text: string) => text.replace(/[қғңүұөәіһё]/gu, (c) => FOLD[c]);
+const foldAll = <T extends [RegExp, ...string[]]>(rows: T[]): T[] =>
+  rows.map(([re, ...rest]) => [new RegExp(fold(re.source), re.flags), ...rest] as T);
+const DYE_COLORS_F = foldAll(DYE_COLORS);
+const OBJECTS_F = foldAll(OBJECTS);
+
 /** Finds "dye <part> <colour>" in an instruction ("шашын қара түске боя" -> hair, black). */
 export function parseRecolor(input: string): RecolorRequest | null {
-  const text = input.toLowerCase().replace(/бас киім|аяқ киім|қызғылт сары/gu, (m) => m.replace(" ", " "));
-  const words = text.match(/[\p{L} -]+/gu)?.map((w) => w.replace(/ /g, " ")) ?? [];
-  const objectAt = words.findIndex((w) => OBJECTS.some(([re]) => re.test(w)));
+  // Two-word names stay one word: "бас киім" (hat), "аяқ киім" (shoes), "қызғылт сары" (orange).
+  const text = input.toLowerCase().replace(/(бас|ая[қк]|[қк]ыз[ғг]ылт) (ки[іи]м|сары)/gu, "$1\u00a0$2");
+  const typed = text.match(/[\p{L}\u00a0-]+/gu)?.map((w) => w.replace(/\u00a0/g, " ")) ?? [];
+  const words = typed.map(fold);
+  const objectAt = words.findIndex((w) => OBJECTS_F.some(([re]) => re.test(w)));
   if (objectAt < 0) return null;
-  const colorOf = (w: string) => DYE_COLORS.find(([re]) => re.test(w));
+  const colorOf = (w: string) => DYE_COLORS_F.find(([re]) => re.test(w));
   const after = words.slice(objectAt + 1).map(colorOf).find(Boolean);
   const before = objectAt > 0 ? colorOf(words[objectAt - 1]) : undefined;
   const dye = after ?? before;
   if (!dye) return null;
-  const object = OBJECTS.find(([re]) => re.test(words[objectAt]))![1];
+  const object = OBJECTS_F.find(([re]) => re.test(words[objectAt]))![1];
   // A colour named right before the part describes it ("the red dress") when another colour follows.
   const target = after && before ? `${before[2]} ${object}` : object;
-  return { target, color: dye[1], word: words[objectAt] };
+  return { target, color: dye[1], word: typed[objectAt] };
 }
