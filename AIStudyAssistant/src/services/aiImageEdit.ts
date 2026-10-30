@@ -8,7 +8,24 @@ const MODEL_ID = "Xenova/clipseg-rd64-refined";
 // Work on at most this many pixels per side; enough for the low-resolution mask.
 const MAX_SIDE = 2400;
 
-type Segmenter = (canvas: HTMLCanvasElement, prompt: string) => Promise<{ mask: Float32Array; width: number; height: number }>;
+type Segmenter = (canvas: HTMLCanvasElement, prompt: string) => Promise<LowResMask>;
+
+// What a part is most often confused with. The model scores the part against all
+// of these at once, so "hair" no longer spills onto the face or the background.
+const RIVALS = ["face", "skin", "background", "clothes", "body"];
+
+/** Turns per-prompt logits into the target's share of each pixel (softmax, target first). */
+export function targetShare(logits: Float32Array, prompts: number, size: number): Float32Array {
+  const out = new Float32Array(size);
+  for (let i = 0; i < size; i++) {
+    let max = -Infinity;
+    for (let k = 0; k < prompts; k++) max = Math.max(max, logits[k * size + i]);
+    let sum = 0;
+    for (let k = 0; k < prompts; k++) sum += Math.exp(logits[k * size + i] - max);
+    out[i] = Math.exp(logits[i] - max) / sum;
+  }
+  return out;
+}
 
 let segmenter: Promise<Segmenter> | null = null;
 
@@ -35,16 +52,25 @@ function loadSegmenter(onProgress?: (fraction: number) => void): Promise<Segment
       ]);
       return async (canvas, prompt) => {
         const image = RawImage.fromCanvas(canvas);
-        const textInputs = tokenizer([prompt], { padding: true, truncation: true });
         const imageInputs = await processor(image);
-        const { logits } = await model({ ...textInputs, ...imageInputs });
-        const dims = logits.dims as number[];
-        const height = dims[dims.length - 2];
-        const width = dims[dims.length - 1];
-        const data = logits.data as Float32Array;
-        const mask = new Float32Array(width * height);
-        for (let i = 0; i < mask.length; i++) mask[i] = 1 / (1 + Math.exp(-data[i]));
-        return { mask, width, height };
+        const run = async (texts: string[]) => {
+          const { logits } = await model({ ...tokenizer(texts, { padding: true, truncation: true }), ...imageInputs });
+          return { dims: logits.dims as number[], data: logits.data as Float32Array };
+        };
+        const prompts = [prompt, ...RIVALS.filter((r) => !prompt.includes(r) && !(prompt === "face" && r === "skin"))];
+        // All prompts in one pass; if this build of the model needs one image per prompt, ask one by one.
+        let out = await run(prompts).catch(() => null);
+        if (!out || (out.dims.length > 2 ? out.dims[0] : 1) !== prompts.length) {
+          const parts = [];
+          for (const text of prompts) parts.push(await run([text]));
+          const size = parts[0].data.length;
+          const data = new Float32Array(size * prompts.length);
+          parts.forEach((p, k) => data.set(p.data.subarray(0, size), k * size));
+          out = { dims: [prompts.length, ...parts[0].dims.slice(-2)], data };
+        }
+        const height = out.dims[out.dims.length - 2];
+        const width = out.dims[out.dims.length - 1];
+        return { mask: targetShare(out.data, prompts.length, width * height), width, height };
       };
     })();
     segmenter.catch(() => {
@@ -119,7 +145,7 @@ export function partZone(low: LowResMask): Uint8Array {
   const { mask, width: w, height: h } = low;
   let peak = 0;
   for (const v of mask) peak = Math.max(peak, v);
-  const threshold = Math.max(0.06, peak * 0.2);
+  const threshold = Math.max(0.12, peak * 0.2);
   const zone = new Uint8Array(w * h);
   for (let i = 0; i < zone.length; i++) zone[i] = mask[i] >= threshold ? 1 : 0;
 
@@ -194,7 +220,7 @@ export function recolorPixels(data: Uint8ClampedArray, width: number, height: nu
   let peak = 0;
   for (const v of low.mask) peak = Math.max(peak, v);
   // Only the most confident core is used to learn the part's colours: a blurry mask spills onto its neighbours.
-  const seedThreshold = Math.max(0.2, peak * 0.7);
+  const seedThreshold = Math.max(0.4, peak * 0.7);
 
   // Colours of the confident core, sampled.
   const seeds: number[] = [];
@@ -202,11 +228,13 @@ export function recolorPixels(data: Uint8ClampedArray, width: number, height: nu
   if (seeds.length < Math.max(16, n * 0.001)) return false;
   const step = Math.max(1, Math.floor(seeds.length / 20000));
   const labs: Lab[] = [];
+  const weights: number[] = [];
   for (let k = 0; k < seeds.length; k += step) {
     const p = seeds[k] * 4;
     labs.push(rgbToLab(data[p], data[p + 1], data[p + 2]));
+    weights.push(prob[seeds[k]] ** 2);
   }
-  const parts = mainColors(labs);
+  const parts = mainColors(labs, weights);
   // Grey parts (black hair) differ from their neighbours mostly by lightness, coloured ones by hue.
   const wL = parts[0].weightL;
 
@@ -267,8 +295,9 @@ export function recolorPixels(data: Uint8ClampedArray, width: number, height: nu
     if (a === 0) continue;
     const p = i * 4;
     const l0 = rgbToHsl(data[p], data[p + 1], data[p + 2])[2];
-    // Move the part's average lightness to the target's while keeping relative shading.
-    const l = tl <= meanL ? (l0 * tl) / meanL : 1 - ((1 - l0) * (1 - tl)) / (1 - meanL);
+    // The target's lightness plus a softened copy of the original shading, kept close
+    // to the target so "black" can never come out light.
+    const l = Math.min(tl + 0.2, Math.max(tl - 0.2, tl + (l0 - meanL) * 0.6));
     const [nr, ng, nb] = hslToRgb(th, ts, Math.min(1, Math.max(0, l)));
     data[p] = data[p] * (1 - a) + nr * a;
     data[p + 1] = data[p + 1] * (1 - a) + ng * a;
@@ -282,7 +311,7 @@ export function recolorPixels(data: Uint8ClampedArray, width: number, height: nu
  * clusters that hold at least 15% of it (thin outlines and stray skin drop out).
  * Each colour gets a matching radius from its own spread.
  */
-function mainColors(labs: Lab[]): { lab: Lab; radius: number; weightL: number }[] {
+function mainColors(labs: Lab[], weights: number[]): { lab: Lab; radius: number; weightL: number }[] {
   const k = Math.min(3, labs.length);
   const wL = 0.6;
   const sorted = [...labs].sort((x, y) => x[0] - y[0]);
@@ -303,13 +332,17 @@ function mainColors(labs: Lab[]): { lab: Lab; radius: number; weightL: number }[
     });
     centers = centers.map((c, j) => (sums[j][3] ? [sums[j][0] / sums[j][3], sums[j][1] / sums[j][3], sums[j][2] / sums[j][3]] : c));
   }
-  const spread = centers.map(() => [0, 0]);
+  // Each colour's share counts the model's confidence, so the colour where the model is surest wins.
+  const spread = centers.map(() => [0, 0, 0]);
+  let total = 0;
   labs.forEach((x, i) => {
     spread[assign[i]][0] += dist2(x, centers[assign[i]]);
     spread[assign[i]][1]++;
+    spread[assign[i]][2] += weights[i];
+    total += weights[i];
   });
   const clusters = centers
-    .map((lab, j) => ({ lab, share: spread[j][1] / labs.length, sd: Math.sqrt(spread[j][0] / Math.max(1, spread[j][1])) }))
+    .map((lab, j) => ({ lab, share: spread[j][2] / total, sd: Math.sqrt(spread[j][0] / Math.max(1, spread[j][1])) }))
     .sort((x, y) => y.share - x.share);
   // The biggest cluster is the part. Another one counts too when it is a shade of
   // the same colour (lighter or darker strands) or clearly a second main colour,

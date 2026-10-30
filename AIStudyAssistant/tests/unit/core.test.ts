@@ -14,7 +14,7 @@ import { AssistantService, classifyQuestion } from "../../server/services/assist
 import { parseSections, stripCodeFence } from "../../server/services/prompts.js";
 import { fuzzyQuery, needsWebSearch, SearchService, searchLanguages, searchTerms } from "../../server/services/searchService.js";
 import { operationsOf, parseInstruction, parseRecolor, DEFAULT_SETTINGS } from "../../src/services/imageOps.js";
-import { recolorPixels, resizeMask } from "../../src/services/aiImageEdit.js";
+import { recolorPixels, resizeMask, targetShare } from "../../src/services/aiImageEdit.js";
 
 const code = (fn: () => unknown) => {
   try {
@@ -236,6 +236,9 @@ describe("image instructions", () => {
     // A colour before the part describes it; the one after is the new colour.
     expect(parseRecolor("қызыл көйлекті көк түске боя")).toMatchObject({ target: "red dress", color: "#2f63d6" });
     expect(parseRecolor("бас киімін қызыл қыл")).toMatchObject({ target: "hat", word: "бас киімін" });
+    // Kazakh typed on a Russian keyboard.
+    expect(parseRecolor("шашын кара туске боя")).toMatchObject({ target: "hair", color: "#1c1c1c", word: "шашын" });
+    expect(parseRecolor("бас киимин кызыл кыл")).toMatchObject({ target: "hat", color: "#d33a3a" });
     expect(parseRecolor("фонды ақ қыл")).toBeNull();
     expect(parseRecolor("ақ-қара қыл")).toBeNull();
     expect(parseRecolor("суретті қара түске боя")).toBeNull();
@@ -268,8 +271,22 @@ describe("image instructions", () => {
     expect(at(20, 20)).toEqual([230, 190, 160]); // skin: untouched
     expect(at(4, 6)).toEqual([240, 240, 240]); // background next to the hair: untouched
     expect(at(2, 38)).toEqual([90, 200, 120]); // the same green far away: untouched
+    for (let i = 0; i < W * W; i++) {
+      // Dyeing black never makes anything light: every changed pixel is dark.
+      const [r, g, b] = [...data.slice(i * 4, i * 4 + 3)];
+      const before = color(i % W, Math.floor(i / W));
+      if (r !== before[0] || g !== before[1] || b !== before[2]) expect(Math.max(r, g, b)).toBeLessThan(110);
+    }
     expect(recolorPixels(new Uint8ClampedArray(400), 10, 10, { mask: new Float32Array(100), width: 10, height: 10 }, "#1c1c1c")).toBe(false);
     expect([...resizeMask(new Float32Array([0, 1]), 2, 1, 4, 1)]).toEqual([0, 0.25, 0.75, 1]);
+  });
+
+  it("scores the part against its rivals so it does not spill onto them", () => {
+    // Two pixels, three prompts (hair, face, background): hair wins the first pixel, face the second.
+    const logits = new Float32Array([3, -1, /* face */ 0, 4, /* background */ -2, -2]);
+    const share = targetShare(logits, 3, 2);
+    expect(share[0]).toBeGreaterThan(0.9);
+    expect(share[1]).toBeLessThan(0.05);
   });
 
   it("lists only the operations that change the image", () => {
