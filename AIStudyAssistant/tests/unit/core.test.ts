@@ -10,7 +10,8 @@ import {
   validatePassword,
   validatePrompt,
 } from "../../server/lib/validation.js";
-import { AssistantService, classifyQuestion } from "../../server/services/assistantService.js";
+import { AssistantService, classifyQuestion, weakCode } from "../../server/services/assistantService.js";
+import { exerciseFor, exerciseTopic } from "../../server/services/studyTools/exercises.js";
 import { parseSections, stripCodeFence } from "../../server/services/prompts.js";
 import { codeFromData, parseDataTask, readsInput, runDataTask } from "../../server/services/studyTools/dataTasks.js";
 import { fuzzyQuery, needsWebSearch, SearchService, searchLanguages, searchTerms } from "../../server/services/searchService.js";
@@ -250,6 +251,50 @@ describe("assistant helpers", () => {
     ]);
     // "тақ" (odd) inside "пернетақтадан" is not a step.
     expect(parseDataTask("пернетақтадан сөздер енгізіп, кері ретпен шығар")?.steps).toEqual([{ kind: "reverse" }]);
+  });
+
+  it("gives a complete practice problem when asked for one", () => {
+    expect(exerciseTopic("функциялар туралы бір шартты есеп бер")).toBe("function");
+    expect(exerciseTopic("дай задачу на циклы")).toBe("loop");
+    expect(exerciseTopic("ООП класс туралы есеп бер")).toBe("class");
+    // A request that describes its own task is not a request for a problem.
+    expect(exerciseTopic("сандардың қосындысын есептейтін функция жаз")).toBeNull();
+    const result = exerciseFor("функциялар туралы бір шартты есеп бер", "python", "kk");
+    expect(result?.code).toMatch(/^# Есеп: grade\(score\)/);
+    expect(result?.code.split("\n").length).toBeGreaterThan(20);
+    expect(result?.sampleOutput).toContain("105: invalid (failed)");
+  });
+
+  it("rejects stub code from the AI and falls back to a full solution", async () => {
+    const stub = '## CODE\n```python\ndef functionality():\n    return "Функциялар туралы бір шартты есеп бер"\n```';
+    expect(weakCode('def f():\n    return "x"', "x")).toBe(true);
+    let calls = 0;
+    const ai = {
+      available: true,
+      onDevice: true,
+      complete: async () => {
+        calls++;
+        return { text: stub, citations: [], usedWebSearch: false };
+      },
+    };
+    const service = new AssistantService(ai, new SearchService({ search: async () => [] }, false));
+    // The keyless model never sees a "give me a problem" request.
+    const exercise = await service.code("функциялар туралы бір шартты есеп бер", "python", "kk");
+    expect(calls).toBe(0);
+    expect(exercise.code).toContain("def grade");
+    // Other requests: a stub is retried once, then replaced.
+    const fallback = await service.code("шартты оператормен жұмыс істейтін бағдарлама керек", "python", "kk");
+    expect(calls).toBe(2);
+    expect(fallback.code).toContain("triangle_type");
+  });
+
+  it("lets Claude write its own practice problems", async () => {
+    let asked = "";
+    const program = "## CODE\n```python\n" + Array.from({ length: 6 }, (_, i) => `print(${i})`).join("\n") + "\n```";
+    const ai = { available: true, onDevice: false, complete: async (r: { prompt: string }) => ((asked = r.prompt), { text: program, citations: [], usedWebSearch: false }) };
+    const result = await new AssistantService(ai, new SearchService({ search: async () => [] }, false)).code("функциялар туралы бір шартты есеп бер", "python", "kk");
+    expect(asked).toContain("функциялар");
+    expect(result.provider).toBe("ai");
   });
 
   it("gives the AI the task data and retries once when its code reads input", async () => {

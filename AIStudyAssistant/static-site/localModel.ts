@@ -83,7 +83,7 @@ export function preloadLocalModel() {
 }
 
 /** Answers one request with the loaded local model; fails if it is still loading or too slow. */
-export async function completeLocally(system: string, prompt: string): Promise<string> {
+export async function completeLocally(system: string, prompt: string, maxTokens = 800): Promise<string> {
   const e = loaded;
   if (!e) throw new Error("local model is not loaded yet");
   const timer = setTimeout(() => e.interruptGenerate(), ANSWER_TIME_LIMIT_MS);
@@ -94,7 +94,7 @@ export async function completeLocally(system: string, prompt: string): Promise<s
         { role: "user", content: prompt },
       ],
       temperature: 0.4,
-      max_tokens: 800,
+      max_tokens: maxTokens,
       extra_body: { enable_thinking: false },
     });
     const choice = reply.choices[0];
